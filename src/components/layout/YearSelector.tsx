@@ -2,6 +2,7 @@
 
 import { useTransition } from 'react'
 import { setGlobalAcademicYear } from '@/actions/settings.action'
+import Link from 'next/link'
 
 interface AcademicYear {
   id: string;
@@ -10,10 +11,12 @@ interface AcademicYear {
 
 export function YearSelector({ 
   years, 
-  currentYearId 
+  currentYearId,
+  isAdmin
 }: { 
   years: AcademicYear[]; 
   currentYearId?: string;
+  isAdmin: boolean;
 }) {
   const [isPending, startTransition] = useTransition()
 
@@ -22,6 +25,21 @@ export function YearSelector({
     startTransition(() => {
       setGlobalAcademicYear(selectedId)
     })
+  }
+
+  if (years.length === 0) {
+    return (
+      <div className="px-4 py-3 border-b bg-amber-50">
+        <p className="text-xs font-medium text-amber-800 mb-2">No Academic Years Found</p>
+        {isAdmin ? (
+          <Link href="/settings" className="px-3 py-1.5 bg-amber-600 text-white text-xs rounded shadow-sm hover:bg-amber-700 block text-center font-medium">
+            Configure Academic Year
+          </Link>
+        ) : (
+          <p className="text-xs text-amber-600">Please contact an Admin to start an academic session.</p>
+        )}
+      </div>
+    )
   }
 
   return (

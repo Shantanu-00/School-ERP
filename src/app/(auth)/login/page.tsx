@@ -1,25 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useActionState } from 'react'
 import { login } from '@/actions/auth.actions'
 
 export default function LoginPage() {
-  const [error, setError] = useState<string | null>(null)
-  const [isPending, setIsPending] = useState(false)
-
-  async function handleSubmit(formData: FormData) {
-    setIsPending(true)
-    setError(null)
-    
-    // Call the server action
-    const result = await login(formData)
-    
-    // If the action returns an error (meaning it didn't redirect), show it
-    if (result?.error) {
-      setError(result.error)
-      setIsPending(false)
-    }
-  }
+  const [state, formAction, isPending] = useActionState(login, null)
 
   return (
     <div className="p-8 bg-white shadow-xl rounded-xl w-full max-w-md border border-gray-100">
@@ -28,7 +13,7 @@ export default function LoginPage() {
         <p className="text-sm text-gray-500 mt-2">Sign in to access your portal</p>
       </div>
 
-      <form action={handleSubmit} className="space-y-4">
+      <form action={formAction} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
           <input
@@ -51,9 +36,9 @@ export default function LoginPage() {
           />
         </div>
 
-        {error && (
+        {state?.error && (
           <div className="p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200">
-            {error}
+            {state.error}
           </div>
         )}
 

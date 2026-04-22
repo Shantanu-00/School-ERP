@@ -202,3 +202,182 @@ CREATE TABLE fee_configurations (
     -- CRITICAL: Prevent duplicate configurations for the exact same criteria
     UNIQUE(academic_year_id, class_id, gender, course_stream)
 );
+
+-- 1. Ensure the get_user_role function works bypassing table restrictions
+CREATE OR REPLACE FUNCTION public.get_user_role() 
+RETURNS TEXT AS $$
+  SELECT role FROM public.staff WHERE auth_id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- 2. Turn on RLS for every single table 
+ALTER TABLE public.staff ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.classes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.academic_years ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fee_configurations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.student_enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fee_invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.fee_payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pocket_money_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.teachers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.teacher_payroll ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.general_expenses ENABLE ROW LEVEL SECURITY;
+
+-- 3. STAFF / CORE AUTH POLICY
+-- Let everybody read their OWN role so the frontend works
+CREATE POLICY "Staff can view own role" ON public.staff FOR SELECT USING (auth_id = auth.uid());
+-- Only Admins can edit or manage system staff
+CREATE POLICY "Admins manage staff" ON public.staff FOR ALL USING (public.get_user_role() = 'Admin');
+
+-- 4. SYSTEM CONFIG (Classes, Academic Years, Fee Configurations)
+-- Read: Admin, Accountant, Teacher
+-- Write: Admin Only
+CREATE POLICY "All can read system config" ON public.classes FOR SELECT USING (true);
+CREATE POLICY "Admins manage classes" ON public.classes FOR ALL USING (public.get_user_role() = 'Admin');
+
+CREATE POLICY "All can read academic years" ON public.academic_years FOR SELECT USING (true);
+CREATE POLICY "Admins manage academic years" ON public.academic_years FOR ALL USING (public.get_user_role() = 'Admin');
+
+CREATE POLICY "All can read fee configurations" ON public.fee_configurations FOR SELECT USING (true);
+CREATE POLICY "Admins manage fee configurations" ON public.fee_configurations FOR ALL USING (public.get_user_role() = 'Admin');
+
+-- 5. STUDENTS AND ENROLLMENTS
+-- Read: Admin, Accountant, Teacher
+-- Write: Admin & Accountant Only
+CREATE POLICY "All can read students" ON public.students FOR SELECT USING (true);
+CREATE POLICY "Admins & Accountants manage students" ON public.students FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+
+CREATE POLICY "All can read student enrollments" ON public.student_enrollments FOR SELECT USING (true);
+CREATE POLICY "Admins & Accountants manage enrollments" ON public.student_enrollments FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+
+-- 6. STRICT FINANCIAL DATA (Invoices, Payments, Pocket Money, General Expenses)
+-- Read & Write: Admin & Accountant Only (Teachers cannot even SELECT these rows)
+CREATE POLICY "Strict Admin Accountant Invoices" ON public.fee_invoices FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+CREATE POLICY "Strict Admin Accountant Payments" ON public.fee_payments FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+CREATE POLICY "Strict Admin Accountant Pocket Money" ON public.pocket_money_transactions FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+CREATE POLICY "Strict Admin Accountant Expenses" ON public.general_expenses FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+
+-- 7. HR & PAYROLL DATA
+-- Read & Write: Admin & Accountant Only
+CREATE POLICY "Strict Admin Accountant Teachers" ON public.teachers FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+CREATE POLICY "Strict Admin Accountant Payroll" ON public.teacher_payroll FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+
+
+-- Add Government & School IDs
+ALTER TABLE public.students
+ADD COLUMN aadhaar_number VARCHAR(12) UNIQUE,
+ADD COLUMN name_on_aadhaar TEXT,
+ADD COLUMN apaar_id VARCHAR(12) UNIQUE;
+
+-- Add Core Demographics & UDISE+ Fields
+ALTER TABLE public.students
+ADD COLUMN blood_group TEXT,
+ADD COLUMN gender TEXT CHECK (gender IN ('Male', 'Female', 'Transgender')),
+ADD COLUMN mother_tongue TEXT,
+ADD COLUMN social_category TEXT CHECK (social_category IN ('General', 'SC', 'ST', 'OBC')),
+ADD COLUMN minority_status TEXT; -- e.g., 'None', 'Muslim', 'Christian', 'Sikh'
+
+-- Add Parent / Guardian Details
+ALTER TABLE public.students
+ADD COLUMN mother_full_name TEXT,
+ADD COLUMN father_full_name TEXT,
+ADD COLUMN guardian_name_and_relation TEXT,
+ADD COLUMN parent_aadhaar_number VARCHAR(12),
+ADD COLUMN primary_contact_number TEXT,
+ADD COLUMN secondary_contact_number TEXT;
+
+-- Add Admission History
+ALTER TABLE public.students
+ADD COLUMN date_of_admission DATE,
+ADD COLUMN previous_school_attended TEXT,
+ADD COLUMN tc_number TEXT;
+
+-- Step 1: Add the toggle for Percentage vs Fixed amount
+ALTER TABLE public.student_enrollments 
+ADD COLUMN discount_mode TEXT DEFAULT 'Percentage' CHECK (discount_mode IN ('Percentage', 'Fixed'));
+
+-- Step 2: Rename the existing percentage column to a generic 'value' column
+ALTER TABLE public.student_enrollments 
+RENAME COLUMN discount_percentage TO discount_value;
+
+-- Step 3: Update the discount_type constraint to include 'Other'
+-- Note: Supabase auto-generates constraint names if not specified. 
+-- The standard naming convention is usually table_column_check.
+ALTER TABLE public.student_enrollments 
+DROP CONSTRAINT IF EXISTS student_enrollments_discount_type_check;
+
+ALTER TABLE public.student_enrollments 
+ADD CONSTRAINT student_enrollments_discount_type_check 
+CHECK (discount_type IN ('None', 'RTE', 'Staff Child', 'Sibling', 'Management Discount', 'Other'));
+
+
+-- 1. Add Current Address Fields
+ALTER TABLE public.students
+ADD COLUMN current_address_line1 TEXT,
+ADD COLUMN current_address_landmark TEXT, -- highly recommended for India
+ADD COLUMN current_city_district TEXT,
+ADD COLUMN current_state TEXT,
+ADD COLUMN current_pincode VARCHAR(6) CHECK (current_pincode ~ '^[0-9]{6}$'); -- Ensures exactly 6 numbers
+
+-- 2. Add the UX Toggle
+ALTER TABLE public.students
+ADD COLUMN is_permanent_same_as_current BOOLEAN DEFAULT TRUE;
+
+-- 3. Add Permanent Address Fields
+ALTER TABLE public.students
+ADD COLUMN permanent_address_line1 TEXT,
+ADD COLUMN permanent_address_landmark TEXT,
+ADD COLUMN permanent_city_district TEXT,
+ADD COLUMN permanent_state TEXT,
+ADD COLUMN permanent_pincode VARCHAR(6) CHECK (permanent_pincode ~ '^[0-9]{6}$');
+
+ALTER TABLE public.fee_invoices
+ADD COLUMN invoice_title TEXT NOT NULL DEFAULT 'Tuition Fee';
+
+ALTER TABLE public.fee_payments
+ADD COLUMN receipt_object_key TEXT;
+
+ALTER TABLE public.fee_payments
+ADD COLUMN transaction_reference TEXT;
+ALTER TABLE public.pocket_money_transactions
+ADD COLUMN receipt_object_key TEXT;
+
+-- ==========================================
+-- 1. Update 'fee_payments' table
+-- ==========================================
+
+-- Rename the singular column to plural
+ALTER TABLE public.fee_payments 
+RENAME COLUMN receipt_object_key TO receipt_object_keys;
+
+-- Convert the column to an array of text, preserving existing data
+ALTER TABLE public.fee_payments 
+ALTER COLUMN receipt_object_keys TYPE TEXT[] 
+USING CASE 
+    WHEN receipt_object_keys IS NOT NULL THEN ARRAY[receipt_object_keys] 
+    ELSE NULL 
+END;
+
+
+-- ==========================================
+-- 2. Update 'pocket_money_transactions' table
+-- ==========================================
+
+-- Rename the recently added singular column to plural
+ALTER TABLE public.pocket_money_transactions 
+RENAME COLUMN receipt_object_key TO receipt_object_keys;
+
+-- Convert the column to an array of text, preserving existing data
+ALTER TABLE public.pocket_money_transactions 
+ALTER COLUMN receipt_object_keys TYPE TEXT[] 
+USING CASE 
+    WHEN receipt_object_keys IS NOT NULL THEN ARRAY[receipt_object_keys] 
+    ELSE NULL 
+END;
+
+
+-- 1. Add student_id directly to the invoice
+ALTER TABLE public.fee_invoices ADD COLUMN student_id UUID REFERENCES students(id);
+
+-- 2. Make enrollment_id optional (nullable)
+ALTER TABLE public.fee_invoices ALTER COLUMN enrollment_id DROP NOT NULL;

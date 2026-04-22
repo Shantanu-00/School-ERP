@@ -18,10 +18,29 @@ export default async function DashboardHome() {
     .from('staff')
     .select('name, role')
     .eq('auth_id', user.id)
-    .single()
+    .maybeSingle()
 
   if (error || !staffData) {
-    return <div>Error loading user profile. Please contact IT.</div>
+    return (
+      <div className="p-8 text-center bg-red-50 rounded-xl mt-12 border border-red-200">
+        <h2 className="text-xl font-bold mb-2 text-red-700">Database Access Error</h2>
+        <p className="text-red-600">The system failed to fetch your profile from the <code>staff</code> table.</p>
+        
+        {error && (
+          <div className="mt-4 p-4 bg-red-100 rounded text-left text-sm font-mono text-red-800">
+            <strong>Supabase Error:</strong> {error.message}<br/>
+            <strong>Details:</strong> {error.details || 'None'}<br/>
+            <strong>Hint:</strong> {error.hint || 'None'}
+          </div>
+        )}
+
+        {!error && !staffData && (
+          <div className="mt-4 text-red-600">
+            <p>Your UID (<code>{user.id}</code>) was not found in the <code>auth_id</code> column.</p>
+          </div>
+        )}
+      </div>
+    )
   }
 
   const { name, role } = staffData

@@ -16,6 +16,10 @@ export function SearchInput({ placeholder = "Search..." }: { placeholder?: strin
   const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
 
   useEffect(() => {
+    // Only trigger a navigation if the input value actually differs from the URL parameters
+    const currentQuery = searchParams.get('query') || ''
+    if (inputValue === currentQuery) return
+
     if (timeoutRef.current) clearTimeout(timeoutRef.current)
 
     timeoutRef.current = setTimeout(() => {
@@ -29,10 +33,11 @@ export function SearchInput({ placeholder = "Search..." }: { placeholder?: strin
         }
         router.replace(`${pathname}?${params.toString()}`)
       })
-    }, 300) 
+    }, 400) 
 
     return () => clearTimeout(timeoutRef.current)
-  }, [inputValue, pathname, router, searchParams])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputValue]) // Removed pathname, router, searchParams to stop the infinite render loop
 
   return (
     <div className="relative flex-1 max-w-md">
