@@ -131,7 +131,41 @@ export async function getStudents({
     throw new Error('Failed to fetch students')
   }
 
-  return { students: data, totalPages: Math.ceil((count || 0) / limit) }
+  // Compute previousDues and absoluteTotalDues.
+  // The main query only returns fee_invoices nested inside the current-year enrollment.
+  // Arrears invoices (enrollment_id = null) and invoices from past-year enrollments are
+  // only reachable via the student_id FK on fee_invoices — so we fetch them separately.
+  const studentIds = (data || []).map((s: any) => s.id as string)
+  const currentEnrollmentIds = new Set(
+    (data || []).map((s: any) => s.student_enrollments?.[0]?.id as string).filter(Boolean)
+  )
+
+  const { data: allInvoices } = await supabase
+    .from('fee_invoices')
+    .select('student_id, enrollment_id, total_amount, fee_payments(amount_paid)')
+    .in('student_id', studentIds)
+
+  const duesMap: Record<string, { previous: number; current: number }> = {}
+  for (const inv of (allInvoices || []) as any[]) {
+    const sid = inv.student_id as string
+    if (!sid) continue
+    if (!duesMap[sid]) duesMap[sid] = { previous: 0, current: 0 }
+    const paid = ((inv.fee_payments || []) as any[]).reduce((sum: number, p: any) => sum + Number(p.amount_paid), 0)
+    const pending = Math.max(0, Number(inv.total_amount) - paid)
+    if (currentEnrollmentIds.has(inv.enrollment_id)) {
+      duesMap[sid].current += pending
+    } else {
+      duesMap[sid].previous += pending
+    }
+  }
+
+  const enriched = (data || []).map((s: any) => ({
+    ...s,
+    previousDues: duesMap[s.id]?.previous || 0,
+    absoluteTotalDues: (duesMap[s.id]?.previous || 0) + (duesMap[s.id]?.current || 0),
+  }))
+
+  return { students: enriched, totalPages: Math.ceil((count || 0) / limit) }
 }
 
 export async function addStudent(formData: FormData): Promise<void> {
@@ -611,6 +645,10 @@ export async function getFormerStudents({
       fee_invoices (
         total_amount,
         fee_payments (amount_paid)
+      ),
+      pocket_money_transactions (
+        transaction_type,
+        amount
       )
     `)
     
@@ -662,6 +700,11 @@ export async function getFormerStudents({
       })
     }
 
+    const walletBalance = (student.pocket_money_transactions || []).reduce(
+      (bal: number, tx: any) => bal + (tx.transaction_type === 'CREDIT' ? Number(tx.amount) : -Number(tx.amount)),
+      0
+    )
+
     return {
       id: student.id,
       first_name: student.first_name,
@@ -669,6 +712,7 @@ export async function getFormerStudents({
       admission_number: student.admission_number,
       status: student.status,
       pendingDues,
+      walletBalance,
       lastKnownClass,
       passoutYear,
       latestStartDateStr: latestStartDate ? (latestStartDate as Date).toISOString() : ''
@@ -715,11 +759,10 @@ export async function addFormerStudent(formData: FormData): Promise<void> {
   }
 
   const fail = (message: string): never => {
-    import('next/navigation').then((m) => m.redirect('/students/former-students/new?error=' + encodeURIComponent(message)))
-    throw new Error(message)
+    redirect(`/students/former-students/new?error=${encodeURIComponent(message)}`)
   }
 
-  // Core Student Fields
+  // Core identity
   const status = normalizeOptional(formData.get('status')) || 'Alumni'
   const first_name = normalizeOptional(formData.get('first_name'))
   const last_name = normalizeOptional(formData.get('last_name'))
@@ -728,13 +771,24 @@ export async function addFormerStudent(formData: FormData): Promise<void> {
   const gender = normalizeOptional(formData.get('gender'))
   const date_of_admission = normalizeOptional(formData.get('date_of_admission'))
   const primary_contact_number = normalizeOptional(formData.get('primary_contact_number'))
+  const tc_number = normalizeOptional(formData.get('tc_number'))
+  const previous_school_attended = normalizeOptional(formData.get('previous_school_attended'))
+  const aadhaar_number = normalizeOptional(formData.get('aadhaar_number'))
+  const apaar_id = normalizeOptional(formData.get('apaar_id'))
 
-  // Enrollment fields
-  const academic_year_id = normalizeOptional(formData.get('academic_year_id'))
+  // Parent / guardian
+  const mother_full_name = normalizeOptional(formData.get('mother_full_name'))
+  const father_full_name = normalizeOptional(formData.get('father_full_name'))
+  const guardian_name_and_relation = normalizeOptional(formData.get('guardian_name_and_relation'))
+  const parent_aadhaar_number = normalizeOptional(formData.get('parent_aadhaar_number'))
+  const secondary_contact_number = normalizeOptional(formData.get('secondary_contact_number'))
+
+  // Enrollment
+  const raw_academic_year_id = normalizeOptional(formData.get('academic_year_id'))
   const class_id = normalizeOptional(formData.get('class_id'))
   const roll_number = parseInt(formData.get('roll_number') as string, 10) || 0
 
-  // Financial fields
+  // Financial
   const pending_arrears = parseFloat(formData.get('pending_arrears') as string) || 0.00
   const pocket_money_amount = parseFloat(formData.get('pocket_money_amount') as string) || 0.00
   const pocket_money_type = formData.get('pocket_money_type') as string || 'CREDIT'
@@ -743,7 +797,7 @@ export async function addFormerStudent(formData: FormData): Promise<void> {
     fail('First name, Last name, Admission number, and Date of Birth are required.')
   }
 
-  if (!academic_year_id || !class_id) {
+  if (!raw_academic_year_id || !class_id) {
     fail('Last Academic Year and Class are required.')
   }
 
@@ -763,6 +817,40 @@ export async function addFormerStudent(formData: FormData): Promise<void> {
     fail('Unauthorized to add former students.')
   }
 
+  // Resolve academic_year_id — if a historic sentinel value was submitted, auto-create the year
+  const HISTORIC_PREFIX = '__historic__'
+  let academic_year_id = raw_academic_year_id
+  if (raw_academic_year_id!.startsWith(HISTORIC_PREFIX)) {
+    const yearName = raw_academic_year_id!.slice(HISTORIC_PREFIX.length) // e.g. "2015-2016"
+    const startYear = parseInt(yearName.split('-')[0], 10)
+    if (isNaN(startYear)) fail('Invalid historical year selected.')
+
+    // Check if it was already created by a previous submission
+    const { data: existing } = await supabase
+      .from('academic_years')
+      .select('id')
+      .eq('name', yearName)
+      .maybeSingle()
+
+    if (existing) {
+      academic_year_id = existing.id
+    } else {
+      const { data: created, error: yearError } = await supabase
+        .from('academic_years')
+        .insert({
+          name: yearName,
+          start_date: `${startYear}-04-01`,
+          end_date: `${startYear + 1}-03-31`,
+          is_active: false,
+        })
+        .select('id')
+        .single()
+
+      if (yearError) fail(`Could not create historical academic year: ${yearError.message}`)
+      academic_year_id = created!.id
+    }
+  }
+
   // DUPLICATE CHECK: Name + DOB combination OR Admission number
   const { data: existingStudent } = await supabase
     .from('students')
@@ -774,7 +862,7 @@ export async function addFormerStudent(formData: FormData): Promise<void> {
     fail('A student with the same admission number or exact name/DOB already exists.')
   }
 
-  // 1. Insert Student Record 
+  // 1. Insert Student Record
   const { data: studentRecord, error: studentError } = await supabase
     .from('students')
     .insert([
@@ -786,7 +874,16 @@ export async function addFormerStudent(formData: FormData): Promise<void> {
         status,
         gender,
         date_of_admission,
-        primary_contact_number
+        primary_contact_number,
+        tc_number,
+        previous_school_attended,
+        aadhaar_number,
+        apaar_id,
+        mother_full_name,
+        father_full_name,
+        guardian_name_and_relation,
+        parent_aadhaar_number,
+        secondary_contact_number,
       }
     ])
     .select()
@@ -859,9 +956,6 @@ export async function addFormerStudent(formData: FormData): Promise<void> {
     }
   }
 
-  const { revalidatePath } = await import('next/cache')
   revalidatePath('/students/former-students')
-  
-  const { redirect } = await import('next/navigation')
   redirect('/students/former-students')
 }

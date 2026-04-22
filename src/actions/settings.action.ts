@@ -72,6 +72,26 @@ export async function addAcademicYear(formData: FormData) {
   return { success: true }
 }
 
+export async function toggleAcademicYearStatus(yearId: string, newStatus: boolean) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Not authenticated' }
+
+  const { data: staffData } = await supabase.from('staff').select('role').eq('auth_id', user.id).single()
+  if (staffData?.role !== 'Admin') return { error: 'Only Admins can perform this action' }
+
+  const { error } = await supabase
+    .from('academic_years')
+    .update({ is_active: newStatus })
+    .eq('id', yearId)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/settings/academic-years')
+  revalidatePath('/', 'layout')
+  return { success: true }
+}
+
 export async function addClass(formData: FormData) {
   const grade_level = formData.get('grade_level') as string
   const section = formData.get('section') as string
