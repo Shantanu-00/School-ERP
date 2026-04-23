@@ -44,11 +44,13 @@ export async function getStudents({
 
   let feesFilterStudentIds: string[] | null = null;
   if (feesStatus && feesStatus !== 'All') {
-    // 1. Find ALL students who have ANY pending invoices across ANY academic year
+    // "Pending" / "Paid" are based solely on Tuition Fee invoices (title starts with "Tuition Fee |").
+    // Manually-issued invoices (field trips, etc.) are excluded so they don't skew the fee status.
     const { data: pendingInvoices } = await supabase
       .from('fee_invoices')
       .select('student_enrollments!inner(student_id)')
-      .in('status', ['Unpaid', 'Partial']);
+      .in('status', ['Unpaid', 'Partial'])
+      .like('invoice_title', 'Tuition Fee |%');
 
     const studentsWithPendingDues = Array.from(new Set(
       (pendingInvoices || []).map((inv: any) => inv.student_enrollments?.student_id).filter(Boolean)
@@ -57,16 +59,16 @@ export async function getStudents({
     if (feesStatus === 'Pending') {
       feesFilterStudentIds = studentsWithPendingDues as string[];
     } else if (feesStatus === 'Paid') {
-      // 2. For 'Paid', they must be enrolled this year, but NOT exist in the pending list
+      // Paid = enrolled this year AND no pending Tuition Fee invoice
       const { data: currentEnrollments } = await supabase
         .from('student_enrollments')
         .select('student_id')
         .eq('academic_year_id', yearId);
-        
+
       const currentStudentIds = (currentEnrollments || []).map((enc: any) => enc.student_id);
       feesFilterStudentIds = currentStudentIds.filter((id: string) => !studentsWithPendingDues.includes(id));
     }
-      
+
     if (!feesFilterStudentIds || feesFilterStudentIds.length === 0) {
       return { students: [], totalPages: 0 }
     }
@@ -90,6 +92,7 @@ export async function getStudents({
           total_amount,
           status,
           due_date,
+          invoice_title,
           fee_payments (amount_paid)
         )
       ),

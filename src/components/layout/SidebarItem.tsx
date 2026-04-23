@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 import { YearSelector } from './YearSelector'
 import { logout } from '@/actions/auth.actions'
-import { LayoutDashboard, Users, GraduationCap, CircleDollarSign, Settings } from 'lucide-react'
+import { LayoutDashboard, Users, GraduationCap, CircleDollarSign, Settings, Layers } from 'lucide-react'
 
 export async function Sidebar() {
   const supabase = await createClient()
@@ -38,6 +38,7 @@ export async function Sidebar() {
     { name: 'Dashboard', href: '/dashboard', roles: ['Admin', 'Accountant', 'Teacher'], icon: LayoutDashboard },
     { name: 'Students', href: '/students', roles: ['Admin', 'Accountant', 'Teacher'], icon: Users },
     { name: 'Former Students', href: '/students/former-students', roles: ['Admin', 'Accountant', 'Teacher'], icon: GraduationCap },
+    { name: 'Bulk Operations', href: '/finance/bulk-operations', roles: ['Admin', 'Accountant'], icon: Layers },
     { name: 'Staff Payroll', href: '/staff/payroll', roles: ['Admin', 'Accountant'], icon: CircleDollarSign },
     { name: 'System Settings', href: '/settings', roles: ['Admin'], icon: Settings },
   ]

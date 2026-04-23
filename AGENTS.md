@@ -381,3 +381,86 @@ ALTER TABLE public.fee_invoices ADD COLUMN student_id UUID REFERENCES students(i
 
 -- 2. Make enrollment_id optional (nullable)
 ALTER TABLE public.fee_invoices ALTER COLUMN enrollment_id DROP NOT NULL;
+
+ALTER TABLE public.teachers DROP COLUMN contact_info;
+-- (Then run the previous query to add phone_number, email, etc.)
+-- Upgrade the teachers table
+ALTER TABLE public.teachers
+  -- 1. Better Contact & Identity
+  ADD COLUMN phone_number VARCHAR(15),
+  ADD COLUMN email TEXT,
+  ADD COLUMN profile_picture_url TEXT, -- Cloudflare link for their photo
+  ADD COLUMN designation TEXT, -- e.g., "PGT Math", "Primary Teacher"
+  
+  -- 2. Government IDs (Crucial for Indian Schools)
+  ADD COLUMN pan_card_number VARCHAR(10) UNIQUE,
+  ADD COLUMN aadhaar_number VARCHAR(12) UNIQUE,
+  
+  -- 3. Banking Details (So the accountant doesn't have to look elsewhere)
+  ADD COLUMN bank_account_name TEXT,
+  ADD COLUMN bank_account_number TEXT,
+  ADD COLUMN bank_ifsc_code VARCHAR(11),
+  ADD COLUMN bank_name TEXT;
+
+
+ALTER TABLE public.teacher_payroll
+  -- 1. The Status Workflow
+  ADD COLUMN status TEXT DEFAULT 'Draft' CHECK (status IN ('Draft', 'Pending Approval', 'Paid', 'Cancelled')),
+  
+  -- 2. Payment Tracking (How was it actually paid?)
+  ADD COLUMN payment_mode TEXT CHECK (payment_mode IN ('Bank Transfer', 'Cash', 'Cheque', 'UPI')),
+  ADD COLUMN transaction_reference TEXT;-- Bank UTR number or Cheque number
+
+  -- Rename the column
+ALTER TABLE public.general_expenses 
+RENAME COLUMN receipt_file_url TO receipt_object_keys;
+
+-- Convert it to a text array safely
+ALTER TABLE public.general_expenses 
+ALTER COLUMN receipt_object_keys TYPE TEXT[] 
+USING CASE 
+    WHEN receipt_object_keys IS NOT NULL THEN ARRAY[receipt_object_keys] 
+    ELSE NULL 
+END;
+
+ALTER TABLE public.general_expenses
+  -- The CA / Offline Sync Identifier
+  ADD COLUMN voucher_number TEXT UNIQUE, -- e.g., 'EXP-045'
+  
+  -- The Dashboard Slicer
+  ADD COLUMN cost_center TEXT DEFAULT 'Main School' CHECK (cost_center IN ('Main School', 'Hostel', 'Mess', 'Transport')),
+  
+  -- Who and How
+  ADD COLUMN payee_name TEXT, -- e.g., 'Reliance Smart', 'Local Plumber'
+  ADD COLUMN payment_mode TEXT CHECK (payment_mode IN ('Cash', 'Bank Transfer', 'UPI', 'Cheque')),
+  ADD COLUMN transaction_reference TEXT, -- Bank UTR, Cheque No
+  
+  -- Audit Tracking for Edits
+  ADD COLUMN updated_by UUID REFERENCES staff(id),
+  ADD COLUMN updated_at TIMESTAMPTZ;
+
+CREATE TABLE other_income (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    academic_year_id UUID REFERENCES academic_years(id) ON DELETE RESTRICT,
+    
+    -- Keep the categories strict so the CA knows what this money is
+    income_category TEXT CHECK (income_category IN ('Borrowed Capital / Loan', 'Owner Deposit', 'Donation', 'Scrap/Asset Sale', 'Other')),
+    
+    amount NUMERIC(12,2) NOT NULL,
+    date_received DATE NOT NULL,
+    description TEXT, -- e.g., "Personal loan from Chairman for new bus"
+    
+    logged_by UUID REFERENCES staff(id), -- Digital Proof
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable RLS so only Admins/Accountants can touch it
+ALTER TABLE public.other_income ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admins Accountants manage other income" 
+ON public.other_income FOR ALL 
+USING (public.get_user_role() IN ('Admin', 'Accountant'));
+ 
+
+
+ 
+

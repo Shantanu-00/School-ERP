@@ -82,16 +82,23 @@ export default async function StudentsPage({
     return transactions.reduce((acc, tx) => acc + (tx.transaction_type === 'CREDIT' ? tx.amount : -tx.amount), 0)
   }
 
+  // Only tuition fee invoices (title starts with "Tuition Fee |") count toward the
+  // displayed fee status. Manually-issued invoices (field trips, etc.) are excluded.
+  const isTuitionFeeInvoice = (inv: any) =>
+    typeof inv.invoice_title === 'string' && inv.invoice_title.startsWith('Tuition Fee |')
+
   const getTotalDues = (invoices: any[]) => {
-    if (!invoices) return { paid: 0, total: 0, pending: 0 };
-    return invoices.reduce((acc, inv) => {
+    if (!invoices) return { paid: 0, total: 0, pending: 0, hasTuitionInvoice: false };
+    const tuition = invoices.filter(isTuitionFeeInvoice)
+    return tuition.reduce((acc, inv) => {
       const paid = inv.fee_payments?.reduce((pAcc: number, p: any) => pAcc + p.amount_paid, 0) || 0
       return {
         paid: acc.paid + paid,
         total: acc.total + inv.total_amount,
-        pending: acc.pending + (inv.total_amount - paid)
+        pending: acc.pending + (inv.total_amount - paid),
+        hasTuitionInvoice: true,
       }
-    }, { paid: 0, total: 0, pending: 0 })
+    }, { paid: 0, total: 0, pending: 0, hasTuitionInvoice: tuition.length > 0 })
   }
 
   return (
@@ -290,7 +297,7 @@ export default async function StudentsPage({
                       <>
                         <td className="p-4 align-middle" title="View Transaction History">
                           <Link href={`/students/${student.id}/fees`} className="hover:bg-gray-50 p-2 -ml-2 rounded-lg transition-colors flex flex-col justify-center h-full gap-1 border border-transparent hover:border-gray-200">
-                            {(!enrollment?.fee_invoices || enrollment.fee_invoices.length === 0) ? (
+                            {!dues.hasTuitionInvoice ? (
                               <span className="bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 mt-1 rounded-md text-[10px] w-max font-bold tracking-widest uppercase shadow-sm">
                                 NO INVOICE
                               </span>
