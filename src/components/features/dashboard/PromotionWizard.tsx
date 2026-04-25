@@ -550,7 +550,7 @@ export default function PromotionWizard({ academicYears, classes }: { academicYe
                           </div>
                           <div className="lg:col-span-2">
                             <label className="block text-xs font-medium mb-1">Value</label>
-                            <input type="number" value={bulkDiscountValue} onChange={e => setBulkDiscountValue(Number(e.target.value || 0))} className="w-full p-2 border rounded-lg bg-white outline-none text-sm" />
+                            <input type="number" value={bulkDiscountValue === 0 ? '' : bulkDiscountValue} onChange={e => setBulkDiscountValue(Number(e.target.value || 0))} onWheel={e => e.currentTarget.blur()} className="w-full p-2 border rounded-lg bg-white outline-none text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" placeholder="0" />
                           </div>
                         </>
                       )}
@@ -583,7 +583,7 @@ export default function PromotionWizard({ academicYears, classes }: { academicYe
                           </div>
                           <div className="lg:col-span-2">
                             <label className="block text-xs font-medium mb-1">Value</label>
-                            <input type="number" value={bulkDiscountValue} onChange={e => setBulkDiscountValue(Number(e.target.value || 0))} className="w-full p-2 border rounded-lg bg-white outline-none text-sm" />
+                            <input type="number" value={bulkDiscountValue === 0 ? '' : bulkDiscountValue} onChange={e => setBulkDiscountValue(Number(e.target.value || 0))} onWheel={e => e.currentTarget.blur()} className="w-full p-2 border rounded-lg bg-white outline-none text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" placeholder="0" />
                           </div>
                         </>
                       )}
@@ -738,7 +738,8 @@ export default function PromotionWizard({ academicYears, classes }: { academicYe
                                     type="number"
                                     value={target.roll_number || ''}
                                     onChange={e => handleTargetChange(s.student_id, 'roll_number', e.target.value)}
-                                    className="mt-1 w-full text-xs p-2 border rounded-md bg-white outline-none"
+                                    onWheel={e => e.currentTarget.blur()}
+                                    className="mt-1 w-full text-xs p-2 border rounded-md bg-white outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                     placeholder="New Roll Number"
                                   />
                                 )}
@@ -798,9 +799,11 @@ export default function PromotionWizard({ academicYears, classes }: { academicYe
                                       <input
                                         disabled={target.discount_type === 'None'}
                                         type="number"
-                                        value={target.discount_value}
+                                        value={target.discount_value === 0 ? '' : target.discount_value}
                                         onChange={e => handleTargetChange(s.student_id, 'discount_value', Number(e.target.value || 0))}
-                                        className="w-full p-2 border rounded-md bg-white text-xs outline-none disabled:bg-slate-100"
+                                        onWheel={e => e.currentTarget.blur()}
+                                        placeholder="0"
+                                        className="w-full p-2 border rounded-md bg-white text-xs outline-none disabled:bg-slate-100 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                       />
                                     </div>
                                     

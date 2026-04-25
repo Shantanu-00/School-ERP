@@ -289,6 +289,7 @@ function ExpenseDrawer({ open, onClose, onSaved, academicYearId, editing }: {
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">₹</span>
               <input type="number" value={form.amount} onChange={e => set('amount')(e.target.value)}
                 placeholder="0.00" required min="0.01" step="0.01"
+                onWheel={e => e.currentTarget.blur()}
                 className="w-full border border-slate-200 rounded-lg pl-7 pr-3 py-2.5 text-sm text-slate-800 font-semibold outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 bg-white transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
             </div>
@@ -432,6 +433,7 @@ function IncomeDrawer({ open, onClose, onSaved, academicYearId }: {
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-medium">₹</span>
               <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" required min="0.01" step="0.01"
+                onWheel={e => e.currentTarget.blur()}
                 className="w-full border border-slate-200 rounded-lg pl-7 pr-3 py-2.5 text-sm text-slate-800 font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 bg-white transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
             </div>

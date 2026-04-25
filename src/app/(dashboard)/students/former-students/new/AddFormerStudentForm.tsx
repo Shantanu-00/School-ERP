@@ -271,8 +271,9 @@ export function AddFormerStudentForm({
               type="number"
               name="roll_number"
               min="0"
-              defaultValue={0}
-              className={inputCls}
+              defaultValue=""
+              onWheel={e => e.currentTarget.blur()}
+              className={`${inputCls} [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none`}
               placeholder="e.g. 12"
             />
           </div>
@@ -304,7 +305,8 @@ export function AddFormerStudentForm({
                 min="0"
                 value={pendingArrears}
                 onChange={(e) => setPendingArrears(e.target.value)}
-                className="w-full pl-7 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm bg-white"
+                onWheel={e => e.currentTarget.blur()}
+                className="w-full pl-7 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 placeholder="0.00"
               />
             </div>
@@ -354,7 +356,8 @@ export function AddFormerStudentForm({
                 min="0"
                 value={pocketMoneyAmount}
                 onChange={(e) => setPocketMoneyAmount(e.target.value)}
-                className="w-full pl-7 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm bg-white"
+                onWheel={e => e.currentTarget.blur()}
+                className="w-full pl-7 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 placeholder="0.00"
               />
             </div>

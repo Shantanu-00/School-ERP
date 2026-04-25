@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import toast from 'react-hot-toast'
 import {
   Loader2, X, Plus, Download, FileText, User, Edit2,
-  ChevronDown, Lock, Users, IndianRupee,
+  ChevronDown, Lock, Users, IndianRupee, AlertCircle,
 } from 'lucide-react'
 import {
   savePayrollDrafts, markPayrollAsPaid, addStaffMember, updateStaffMember,
@@ -39,7 +39,10 @@ type PayrollRecord = {
   base_amount: number
   bonus_amount: number
   deduction_amount: number
-  net_paid: number
+  arrears_brought_forward: number
+  net_payable: number
+  amount_paid: number
+  balance_carried_forward: number
   payment_date: string
   remarks: string | null
   status: string | null
@@ -57,6 +60,10 @@ type PayrollRow = {
   baseAmount: number
   bonusAmount: number
   deductionAmount: number
+  arrearsAmount: number   // auto-loaded from prev month, but editable
+  netPayable: number      // base + bonus - deductions + arrears
+  amountPaid: number      // what the school is actually paying today
+  balanceCarriedForward: number // netPayable - amountPaid
   remarks: string
   status: PayrollStatus
   isPaid: boolean
@@ -66,8 +73,12 @@ type PayrollRow = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function net(base: number, bonus: number, deduction: number) {
-  return Math.max(0, base + bonus - deduction)
+function calcNetPayable(base: number, bonus: number, deduction: number, arrears: number) {
+  return Math.max(0, base + bonus - deduction + arrears)
+}
+
+function calcBalance(netPayable: number, amountPaid: number) {
+  return Math.max(0, netPayable - amountPaid)
 }
 
 function fmtINR(n: number) {
@@ -91,6 +102,13 @@ function currentMonthYear() {
   return `${MONTH_NAMES[d.getMonth()]}-${d.getFullYear()}`
 }
 
+function prevMonthLabel(my: string): string {
+  const p = parseMonthYear(my)
+  if (!p) return 'prev month'
+  if (p.month === 0) return `Dec-${p.year - 1}`
+  return `${MONTH_NAMES[p.month - 1]}-${p.year}`
+}
+
 function isEditablePeriod(monthYear: string): boolean {
   const now = new Date()
   const parsed = parseMonthYear(monthYear)
@@ -104,7 +122,6 @@ function isEditablePeriod(monthYear: string): boolean {
 function allMonths(): string[] {
   const now = new Date()
   const result: string[] = []
-  // 36 months back to 2 months ahead
   for (let i = -36; i <= 2; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() + i, 1)
     result.push(`${MONTH_NAMES[d.getMonth()]}-${d.getFullYear()}`)
@@ -116,7 +133,8 @@ function allMonths(): string[] {
 
 function buildPayslipHTML(rows: PayrollRow[], monthYear: string, schoolName = 'EduERP School'): string {
   const rowsHtml = rows.map(row => {
-    const netAmt = net(row.baseAmount, row.bonusAmount, row.deductionAmount)
+    const hasArrears = row.arrearsAmount > 0
+    const hasBalance = row.balanceCarriedForward > 0
     return `
     <div class="slip">
       <div class="slip-header">
@@ -151,7 +169,10 @@ function buildPayslipHTML(rows: PayrollRow[], monthYear: string, schoolName = 'E
             <tr><td>Base Salary</td><td>${fmtINR(row.baseAmount)}</td></tr>
             <tr class="plus"><td>Bonus / Allowance</td><td>+ ${fmtINR(row.bonusAmount)}</td></tr>
             <tr class="minus"><td>Deductions</td><td>− ${fmtINR(row.deductionAmount)}</td></tr>
-            <tr class="net"><td><strong>Net Payable</strong></td><td><strong>${fmtINR(netAmt)}</strong></td></tr>
+            ${hasArrears ? `<tr class="arrears"><td>Arrears from ${prevMonthLabel(monthYear)}</td><td>+ ${fmtINR(row.arrearsAmount)}</td></tr>` : ''}
+            <tr class="net"><td><strong>Net Payable</strong></td><td><strong>${fmtINR(row.netPayable)}</strong></td></tr>
+            <tr class="paid-row"><td><strong>Amount Paid</strong></td><td><strong>${fmtINR(row.amountPaid)}</strong></td></tr>
+            ${hasBalance ? `<tr class="balance"><td>Balance Carried to Next Month</td><td>${fmtINR(row.balanceCarriedForward)}</td></tr>` : ''}
           </tbody>
         </table>
 
@@ -205,8 +226,12 @@ function buildPayslipHTML(rows: PayrollRow[], monthYear: string, schoolName = 'E
   .earnings-table th:last-child { text-align: right; }
   .earnings-table tr.plus td { color: #16a34a; }
   .earnings-table tr.minus td { color: #dc2626; }
+  .earnings-table tr.arrears td { color: #7c3aed; }
   .earnings-table tr.net { background: #f0fdf4; }
-  .earnings-table tr.net td { font-size: 14px; padding: 11px 12px; border-bottom: none; }
+  .earnings-table tr.net td { font-size: 14px; padding: 11px 12px; border-bottom: 1px solid #e2e8f0; }
+  .earnings-table tr.paid-row td { font-size: 13px; padding: 10px 12px; border-bottom: 1px solid #e2e8f0; color: #0f172a; }
+  .earnings-table tr.balance { background: #fefce8; }
+  .earnings-table tr.balance td { color: #92400e; font-size: 11px; border-bottom: none; }
   .payment-info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 10px 14px;
     display: flex; gap: 20px; flex-wrap: wrap; font-size: 11px; color: #1e40af; margin-bottom: 14px; }
   .bank-block { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 14px;
@@ -237,17 +262,18 @@ function printPayslips(rows: PayrollRow[], monthYear: string): void {
 
 // ─── Numeric Input ─────────────────────────────────────────────────────────────
 
-function NumInput({ value, onChange, disabled }: {
-  value: number; onChange: (v: number) => void; disabled?: boolean
+function NumInput({ value, onChange, disabled, className }: {
+  value: number; onChange: (v: number) => void; disabled?: boolean; className?: string
 }) {
   return (
     <input
       type="number" min="0" step="0.01"
       value={value === 0 ? '' : value}
       onChange={e => { const v = parseFloat(e.target.value); onChange(isNaN(v) || v < 0 ? 0 : v) }}
+      onWheel={e => e.currentTarget.blur()}
       disabled={disabled}
       placeholder="0"
-      className="w-28 border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-50 disabled:text-slate-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+      className={`w-28 border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-50 disabled:text-slate-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${className || ''}`}
     />
   )
 }
@@ -262,6 +288,7 @@ function Field({ label, name, type = 'text', required, defaultValue, placeholder
     <div>
       <label className="block text-xs font-medium text-slate-600 mb-1">{label}{required && ' *'}</label>
       <input name={name} type={type} required={required} defaultValue={defaultValue ?? ''} placeholder={placeholder}
+        onWheel={type === 'number' ? e => e.currentTarget.blur() : undefined}
         className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
     </div>
@@ -367,11 +394,16 @@ function PaymentModal({ row, onClose, onPaid }: {
   const [paymentMode, setPaymentMode] = useState('Cash')
   const [transactionRef, setTransactionRef] = useState('')
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0])
+  const [amountPaid, setAmountPaid] = useState(row.netPayable)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  const netAmt = net(row.baseAmount, row.bonusAmount, row.deductionAmount)
+
+  const balance = calcBalance(row.netPayable, amountPaid)
+  const isPartial = balance > 0
 
   const handleConfirm = async () => {
+    if (amountPaid <= 0) { setErr('Amount paid must be greater than zero.'); return }
+    if (amountPaid > row.netPayable) { setErr('Amount paid cannot exceed net payable.'); return }
     if (paymentMode !== 'Cash' && !transactionRef.trim()) {
       setErr('Transaction reference is required for non-cash payments.'); return
     }
@@ -379,13 +411,17 @@ function PaymentModal({ row, onClose, onPaid }: {
     const result = await markPayrollAsPaid({
       dbRowId: row.dbRowId, teacherId: row.teacher.id, monthYear: row.monthYear,
       baseAmount: row.baseAmount, bonusAmount: row.bonusAmount,
-      deductionAmount: row.deductionAmount, netPaid: netAmt,
+      deductionAmount: row.deductionAmount,
+      arrearsAmount: row.arrearsAmount,
+      netPayable: row.netPayable,
+      amountPaid,
+      balanceCarriedForward: balance,
       remarks: row.remarks, paymentDate, paymentMode,
       transactionReference: transactionRef,
     })
     setSaving(false)
     if (result.error) { setErr(result.error); return }
-    toast.success(`Payment marked for ${row.teacher.first_name} ${row.teacher.last_name}.`)
+    toast.success(`Payment recorded for ${row.teacher.first_name} ${row.teacher.last_name}.${isPartial ? ` ${fmtINR(balance)} carried to next month.` : ''}`)
     onPaid(); onClose()
   }
 
@@ -397,19 +433,64 @@ function PaymentModal({ row, onClose, onPaid }: {
           <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100 transition"><X size={18} /></button>
         </div>
         <div className="p-5 space-y-4">
+          {/* Summary block */}
           <div className="bg-slate-50 rounded-xl p-4 text-sm space-y-2">
             <div className="flex justify-between"><span className="text-slate-500">Staff</span><span className="font-semibold">{row.teacher.first_name} {row.teacher.last_name}</span></div>
             <div className="flex justify-between"><span className="text-slate-500">Month</span><span className="font-semibold">{row.monthYear}</span></div>
             {row.teacher.bank_account_number && (
               <div className="flex justify-between"><span className="text-slate-500">Account</span><span className="font-medium text-xs">{row.teacher.bank_name} — {row.teacher.bank_account_number}</span></div>
             )}
-            <div className="flex justify-between border-t pt-2 mt-2">
-              <span className="text-slate-600 font-medium">Net Payable</span>
-              <span className="font-bold text-lg text-emerald-700">{fmtINR(netAmt)}</span>
+            <div className="border-t pt-2 mt-2 space-y-1.5 text-xs text-slate-600">
+              <div className="flex justify-between"><span>Base Salary</span><span>{fmtINR(row.baseAmount)}</span></div>
+              {row.bonusAmount > 0 && <div className="flex justify-between text-emerald-600"><span>Bonus</span><span>+ {fmtINR(row.bonusAmount)}</span></div>}
+              {row.deductionAmount > 0 && <div className="flex justify-between text-rose-600"><span>Deductions</span><span>− {fmtINR(row.deductionAmount)}</span></div>}
+              {row.arrearsAmount > 0 && <div className="flex justify-between text-violet-600"><span>Arrears from {prevMonthLabel(row.monthYear)}</span><span>+ {fmtINR(row.arrearsAmount)}</span></div>}
+              <div className="flex justify-between border-t pt-1.5 font-semibold text-sm text-slate-800">
+                <span>Net Payable</span>
+                <span className="text-emerald-700">{fmtINR(row.netPayable)}</span>
+              </div>
             </div>
           </div>
 
           {err && <div className="p-3 bg-red-50 text-red-700 text-sm rounded-md border border-red-200">{err}</div>}
+
+          {/* Amount being paid — editable to allow partial */}
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">
+              Amount Being Paid Today (₹) *
+              <span className="ml-1 font-normal text-slate-400">— enter less to carry forward balance</span>
+            </label>
+            <input
+              type="number" min="0.01" max={row.netPayable} step="0.01"
+              value={amountPaid === 0 ? '' : amountPaid}
+              onChange={e => { const v = parseFloat(e.target.value); setAmountPaid(isNaN(v) || v < 0 ? 0 : v) }}
+              onWheel={e => e.currentTarget.blur()}
+              className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+          </div>
+
+          {/* Live balance preview */}
+          {isPartial && (
+            <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-sm">
+              <AlertCircle size={15} className="text-amber-600 mt-0.5 shrink-0" />
+              <div className="text-amber-700">
+                <span className="font-semibold">{fmtINR(balance)}</span> will be carried forward as arrears to{' '}
+                <span className="font-semibold">{/* next month label */}{(() => {
+                  const p = parseMonthYear(row.monthYear)
+                  if (!p) return 'next month'
+                  const nm = p.month === 11 ? 0 : p.month + 1
+                  const ny = p.month === 11 ? p.year + 1 : p.year
+                  return `${MONTH_NAMES[nm]}-${ny}`
+                })()}</span>.
+              </div>
+            </div>
+          )}
+
+          {amountPaid > 0 && amountPaid === row.netPayable && (
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 text-sm text-emerald-700">
+              Full salary of {fmtINR(row.netPayable)} will be marked as paid.
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Payment Date *</label>
@@ -437,8 +518,9 @@ function PaymentModal({ row, onClose, onPaid }: {
           )}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 border border-slate-200 text-slate-700 rounded-lg py-2 text-sm font-medium hover:bg-slate-50 transition">Cancel</button>
-            <button onClick={handleConfirm} disabled={saving} className="flex-1 bg-emerald-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-emerald-700 transition flex items-center justify-center gap-2 disabled:opacity-70">
-              {saving ? <><Loader2 size={15} className="animate-spin" /> Saving</> : 'Confirm & Mark Paid'}
+            <button onClick={handleConfirm} disabled={saving || amountPaid <= 0}
+              className="flex-1 bg-emerald-600 text-white rounded-lg py-2 text-sm font-medium hover:bg-emerald-700 transition flex items-center justify-center gap-2 disabled:opacity-70">
+              {saving ? <><Loader2 size={15} className="animate-spin" /> Saving</> : isPartial ? 'Confirm Partial Payment' : 'Confirm & Mark Paid'}
             </button>
           </div>
         </div>
@@ -562,16 +644,16 @@ function StaffListTab({ teachers, isAdmin, onAdd, onEdit }: {
 // ─── Payroll Tab ──────────────────────────────────────────────────────────────
 
 function PayrollTab({
-  initialTeachers, initialRecords, initialMonth, isAdmin,
+  initialTeachers, initialRecords, initialMonth, initialPrevBalances, isAdmin,
 }: {
   initialTeachers: Teacher[]; initialRecords: PayrollRecord[]
-  initialMonth: string; isAdmin: boolean
+  initialMonth: string; initialPrevBalances: Record<string, number>; isAdmin: boolean
 }) {
   const months = useMemo(() => allMonths(), [])
   const [selectedMonth, setSelectedMonth] = useState(initialMonth)
   const [teachers, setTeachers] = useState<Teacher[]>(initialTeachers)
   const [payrollRows, setPayrollRows] = useState<PayrollRow[]>(() =>
-    buildRows(initialTeachers, initialRecords, initialMonth)
+    buildRows(initialTeachers, initialRecords, initialMonth, initialPrevBalances)
   )
   const [generated, setGenerated] = useState(initialRecords.length > 0)
   const [loadingMonth, setLoadingMonth] = useState(false)
@@ -580,24 +662,33 @@ function PayrollTab({
 
   const editable = isEditablePeriod(selectedMonth)
 
-  // ── Core: merge teacher list with DB records so no teacher disappears ─────────
-
-  function buildRows(ts: Teacher[], records: PayrollRecord[], month: string): PayrollRow[] {
+  function buildRows(
+    ts: Teacher[],
+    records: PayrollRecord[],
+    month: string,
+    prevBalances: Record<string, number>
+  ): PayrollRow[] {
     const recMap = new Map(records.map(r => [r.teacher_id, r]))
 
-    // Build rows for all active teachers, filling in DB data if it exists
     return ts.map(t => {
       const rec = recMap.get(t.id)
       if (rec) {
         const isPaid = rec.status === 'Paid'
+        const arrears = Number(rec.arrears_brought_forward || 0)
+        const netPayable = Number(rec.net_payable || calcNetPayable(Number(rec.base_amount), Number(rec.bonus_amount), Number(rec.deduction_amount), arrears))
+        const amtPaid = Number(rec.amount_paid || 0)
         return {
           localId: rec.id,
           dbRowId: rec.id,
           teacher: t,
           monthYear: month,
-          baseAmount: rec.base_amount,
-          bonusAmount: rec.bonus_amount,
-          deductionAmount: rec.deduction_amount,
+          baseAmount: Number(rec.base_amount),
+          bonusAmount: Number(rec.bonus_amount),
+          deductionAmount: Number(rec.deduction_amount),
+          arrearsAmount: arrears,
+          netPayable,
+          amountPaid: amtPaid,
+          balanceCarriedForward: Number(rec.balance_carried_forward || calcBalance(netPayable, amtPaid)),
           remarks: rec.remarks || '',
           status: isPaid ? 'Paid' : rec.status === 'Pending Approval' ? 'Pending Approval' : 'Draft',
           isPaid,
@@ -605,7 +696,9 @@ function PayrollTab({
           transactionReference: rec.transaction_reference || '',
         } as PayrollRow
       }
-      // No DB record yet — draft row
+      // No DB record — draft row: auto-load arrears from prev month
+      const arrears = prevBalances[t.id] || 0
+      const netPayable = calcNetPayable(t.base_salary, 0, 0, arrears)
       return {
         localId: crypto.randomUUID(),
         teacher: t,
@@ -613,6 +706,10 @@ function PayrollTab({
         baseAmount: t.base_salary,
         bonusAmount: 0,
         deductionAmount: 0,
+        arrearsAmount: arrears,
+        netPayable,
+        amountPaid: netPayable,
+        balanceCarriedForward: 0,
         remarks: '',
         status: 'Draft' as PayrollStatus,
         isPaid: false,
@@ -622,8 +719,6 @@ function PayrollTab({
     })
   }
 
-  // ── Month change ──────────────────────────────────────────────────────────────
-
   const handleMonthChange = useCallback(async (month: string) => {
     setSelectedMonth(month)
     setLoadingMonth(true)
@@ -632,7 +727,7 @@ function PayrollTab({
       const json = await res.json()
       if (json.error) { toast.error(json.error); return }
       setTeachers(json.teachers)
-      const rows = buildRows(json.teachers, json.payrollRecords, month)
+      const rows = buildRows(json.teachers, json.payrollRecords, month, json.prevMonthBalances || {})
       setPayrollRows(rows)
       setGenerated(rows.some(r => r.dbRowId !== undefined))
     } catch {
@@ -643,12 +738,33 @@ function PayrollTab({
   }, [])
 
   const handleGenerate = () => {
-    setPayrollRows(buildRows(teachers, [], selectedMonth))
+    // When generating fresh, build with current prevBalances from state
+    const prevBalances: Record<string, number> = {}
+    for (const r of payrollRows) {
+      prevBalances[r.teacher.id] = r.arrearsAmount
+    }
+    setPayrollRows(buildRows(teachers, [], selectedMonth, prevBalances))
     setGenerated(true)
   }
 
   const updateRow = useCallback((localId: string, patch: Partial<PayrollRow>) => {
-    setPayrollRows(prev => prev.map(r => r.localId === localId ? { ...r, ...patch } : r))
+    setPayrollRows(prev => prev.map(r => {
+      if (r.localId !== localId) return r
+      const updated = { ...r, ...patch }
+      // Recalculate net payable and balance whenever relevant fields change
+      if ('baseAmount' in patch || 'bonusAmount' in patch || 'deductionAmount' in patch || 'arrearsAmount' in patch) {
+        updated.netPayable = calcNetPayable(updated.baseAmount, updated.bonusAmount, updated.deductionAmount, updated.arrearsAmount)
+        // Keep amountPaid capped at new netPayable
+        if (updated.amountPaid > updated.netPayable) updated.amountPaid = updated.netPayable
+        updated.balanceCarriedForward = calcBalance(updated.netPayable, updated.amountPaid)
+      }
+      if ('amountPaid' in patch) {
+        const paid = Math.min(updated.amountPaid, updated.netPayable)
+        updated.amountPaid = paid
+        updated.balanceCarriedForward = calcBalance(updated.netPayable, paid)
+      }
+      return updated
+    }))
   }, [])
 
   const handleStatusChange = useCallback((row: PayrollRow, newStatus: string) => {
@@ -666,12 +782,14 @@ function PayrollTab({
       teacherId: r.teacher.id, monthYear: r.monthYear,
       baseAmount: r.baseAmount, bonusAmount: r.bonusAmount,
       deductionAmount: r.deductionAmount,
-      netPaid: net(r.baseAmount, r.bonusAmount, r.deductionAmount),
+      arrearsAmount: r.arrearsAmount,
+      netPayable: r.netPayable,
+      amountPaid: r.amountPaid,
+      balanceCarriedForward: r.balanceCarriedForward,
       remarks: r.remarks, status: r.status, dbRowId: r.dbRowId,
     })))
     setSaving(false)
     if (result.error) { toast.error(result.error); return }
-    // Patch in new DB IDs
     if (result.insertedRows?.length) {
       setPayrollRows(prev => prev.map(r => {
         const match = result.insertedRows!.find(ir => ir.teacherId === r.teacher.id && !r.dbRowId)
@@ -682,12 +800,15 @@ function PayrollTab({
   }
 
   const summary = useMemo(() => {
-    const total = payrollRows.reduce((s, r) => s + net(r.baseAmount, r.bonusAmount, r.deductionAmount), 0)
-    const paid = payrollRows.filter(r => r.isPaid).reduce((s, r) => s + net(r.baseAmount, r.bonusAmount, r.deductionAmount), 0)
-    return { total, paid, pending: total - paid }
+    const totalPayable = payrollRows.reduce((s, r) => s + r.netPayable, 0)
+    const totalPaid = payrollRows.filter(r => r.isPaid).reduce((s, r) => s + r.amountPaid, 0)
+    const totalCarried = payrollRows.reduce((s, r) => s + r.balanceCarriedForward, 0)
+    const totalArrears = payrollRows.reduce((s, r) => s + r.arrearsAmount, 0)
+    return { totalPayable, totalPaid, totalCarried, totalArrears }
   }, [payrollRows])
 
   const paidRows = payrollRows.filter(r => r.isPaid)
+  const hasAnyArrears = payrollRows.some(r => r.arrearsAmount > 0)
 
   return (
     <>
@@ -703,7 +824,6 @@ function PayrollTab({
         {/* Controls row */}
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3 flex-wrap">
-            {/* Month selector */}
             <div className="relative">
               <select value={selectedMonth} onChange={e => handleMonthChange(e.target.value)} disabled={loadingMonth}
                 className="appearance-none border border-slate-200 rounded-lg px-3 py-2 pr-8 text-sm font-medium text-slate-700 outline-none focus:ring-2 focus:ring-blue-400 bg-white shadow-sm cursor-pointer">
@@ -712,7 +832,6 @@ function PayrollTab({
               <ChevronDown size={14} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             </div>
 
-            {/* Lock badge */}
             {!editable && (
               <span className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-lg font-medium">
                 <Lock size={12} /> View only — outside edit window (±2 months)
@@ -732,18 +851,24 @@ function PayrollTab({
 
         {/* Summary Cards */}
         {generated && (
-          <div className="grid grid-cols-3 gap-4">
+          <div className={`grid gap-4 ${hasAnyArrears ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
             <div className="bg-white rounded-xl border p-4 shadow-sm">
-              <div className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-1">Total Payroll</div>
-              <div className="text-xl font-bold text-slate-800">{fmtINR(summary.total)}</div>
+              <div className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-1">Net Payable</div>
+              <div className="text-xl font-bold text-slate-800">{fmtINR(summary.totalPayable)}</div>
             </div>
             <div className="bg-white rounded-xl border p-4 shadow-sm">
               <div className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-1">Disbursed</div>
-              <div className="text-xl font-bold text-emerald-600">{fmtINR(summary.paid)}</div>
+              <div className="text-xl font-bold text-emerald-600">{fmtINR(summary.totalPaid)}</div>
             </div>
-            <div className="bg-white rounded-xl border p-4 shadow-sm">
-              <div className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-1">Pending</div>
-              <div className="text-xl font-bold text-amber-600">{fmtINR(summary.pending)}</div>
+            {hasAnyArrears && (
+              <div className="bg-violet-50 rounded-xl border border-violet-200 p-4 shadow-sm">
+                <div className="text-xs text-violet-600 font-medium uppercase tracking-wider mb-1">Arrears Included</div>
+                <div className="text-xl font-bold text-violet-700">{fmtINR(summary.totalArrears)}</div>
+              </div>
+            )}
+            <div className={`rounded-xl border p-4 shadow-sm ${summary.totalCarried > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white'}`}>
+              <div className={`text-xs font-medium uppercase tracking-wider mb-1 ${summary.totalCarried > 0 ? 'text-amber-600' : 'text-slate-500'}`}>Carry Forward</div>
+              <div className={`text-xl font-bold ${summary.totalCarried > 0 ? 'text-amber-700' : 'text-slate-400'}`}>{fmtINR(summary.totalCarried)}</div>
             </div>
           </div>
         )}
@@ -785,20 +910,22 @@ function PayrollTab({
                 <thead className="bg-slate-50 border-b text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   <tr>
                     <th className="px-4 py-3">Staff</th>
-                    <th className="px-4 py-3">Base Salary</th>
+                    <th className="px-4 py-3">Base</th>
                     <th className="px-4 py-3">Bonus (₹)</th>
                     <th className="px-4 py-3">Deduction (₹)</th>
-                    <th className="px-4 py-3">Net Payable</th>
+                    <th className="px-4 py-3 text-violet-600">Arrears (₹)</th>
+                    <th className="px-4 py-3 text-emerald-700">Net Payable</th>
+                    <th className="px-4 py-3">Amount Paid (₹)</th>
+                    <th className="px-4 py-3 text-amber-600">Carry Fwd</th>
                     <th className="px-4 py-3">Remarks</th>
                     <th className="px-4 py-3 w-44">Status</th>
-                    <th className="px-4 py-3 w-20 text-center">Actions</th>
+                    <th className="px-4 py-3 w-16 text-center">Print</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {payrollRows.map(row => {
-                    const netAmt = net(row.baseAmount, row.bonusAmount, row.deductionAmount)
-                    // A row is locked if paid, OR if the period is outside the editable window
                     const locked = row.isPaid || !editable
+                    const hasBalance = row.balanceCarriedForward > 0
 
                     return (
                       <tr key={row.localId} className={`transition-colors ${row.isPaid ? 'bg-emerald-50/40' : 'hover:bg-slate-50/50'}`}>
@@ -806,7 +933,7 @@ function PayrollTab({
                           <div className="font-semibold text-slate-800">{row.teacher.first_name} {row.teacher.last_name}</div>
                           {row.teacher.designation && <div className="text-[10px] text-slate-400 mt-0.5">{row.teacher.designation}</div>}
                         </td>
-                        <td className="px-4 py-3 font-medium text-slate-700">{fmtINR(row.baseAmount)}</td>
+                        <td className="px-4 py-3 font-medium text-slate-700 whitespace-nowrap">{fmtINR(row.baseAmount)}</td>
                         <td className="px-4 py-3">
                           <NumInput value={row.bonusAmount} onChange={v => updateRow(row.localId, { bonusAmount: v })} disabled={locked} />
                         </td>
@@ -814,7 +941,45 @@ function PayrollTab({
                           <NumInput value={row.deductionAmount} onChange={v => updateRow(row.localId, { deductionAmount: v })} disabled={locked} />
                         </td>
                         <td className="px-4 py-3">
-                          <span className="font-bold text-slate-800">{fmtINR(netAmt)}</span>
+                          {locked ? (
+                            <span className={`text-sm font-medium ${row.arrearsAmount > 0 ? 'text-violet-700' : 'text-slate-400'}`}>
+                              {row.arrearsAmount > 0 ? fmtINR(row.arrearsAmount) : '—'}
+                            </span>
+                          ) : (
+                            <div className="relative">
+                              <NumInput
+                                value={row.arrearsAmount}
+                                onChange={v => updateRow(row.localId, { arrearsAmount: v })}
+                                className="border-violet-200 focus:ring-violet-400"
+                              />
+                              {row.arrearsAmount > 0 && (
+                                <div className="text-[9px] text-violet-500 mt-0.5 whitespace-nowrap">from {prevMonthLabel(row.monthYear)}</div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="font-bold text-emerald-700 whitespace-nowrap">{fmtINR(row.netPayable)}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {locked ? (
+                            <span className="font-semibold text-slate-800 whitespace-nowrap">{fmtINR(row.amountPaid)}</span>
+                          ) : (
+                            <NumInput
+                              value={row.amountPaid}
+                              onChange={v => updateRow(row.localId, { amountPaid: Math.min(v, row.netPayable) })}
+                              className="border-slate-300"
+                            />
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {hasBalance ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 whitespace-nowrap">
+                              {fmtINR(row.balanceCarriedForward)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300 text-sm">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           {locked ? (
@@ -830,12 +995,17 @@ function PayrollTab({
                             <input type="text" value={row.remarks}
                               onChange={e => updateRow(row.localId, { remarks: e.target.value })}
                               placeholder="Optional notes"
-                              className="w-full min-w-[140px] border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
+                              className="w-full min-w-[120px] border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
                           )}
                         </td>
                         <td className="px-4 py-3">
                           {row.isPaid ? (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-700 border border-emerald-200">Paid</span>
+                            <div className="space-y-0.5">
+                              <span className="inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-700 border border-emerald-200">Paid</span>
+                              {row.balanceCarriedForward > 0 && (
+                                <div className="text-[9px] text-amber-600 font-medium">{fmtINR(row.balanceCarriedForward)} carried</div>
+                              )}
+                            </div>
                           ) : !editable ? (
                             <span className={`inline-flex items-center px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
                               row.status === 'Pending Approval' ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-slate-100 text-slate-600 border-slate-200'
@@ -893,11 +1063,13 @@ export default function PayrollClient({
   initialTeachers,
   initialRecords,
   initialMonth,
+  initialPrevBalances,
   userRole,
 }: {
   initialTeachers: Teacher[]
   initialRecords: PayrollRecord[]
   initialMonth: string
+  initialPrevBalances: Record<string, number>
   userRole: 'Admin' | 'Accountant'
 }) {
   const isAdmin = userRole === 'Admin'
@@ -916,7 +1088,6 @@ export default function PayrollClient({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      {/* Add/Edit Staff Modal */}
       {(addStaffOpen || editTeacher) && (
         <StaffModal
           initial={editTeacher || undefined}
@@ -925,7 +1096,6 @@ export default function PayrollClient({
         />
       )}
 
-      {/* Page header */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Staff Payroll</h1>
@@ -939,7 +1109,6 @@ export default function PayrollClient({
         )}
       </div>
 
-      {/* Tabs */}
       <div className="flex border-b border-slate-200">
         {([
           { key: 'payroll', label: 'Payroll', icon: IndianRupee },
@@ -957,12 +1126,12 @@ export default function PayrollClient({
         ))}
       </div>
 
-      {/* Tab content */}
       {activeTab === 'payroll' && (
         <PayrollTab
           initialTeachers={initialTeachers}
           initialRecords={initialRecords}
           initialMonth={initialMonth}
+          initialPrevBalances={initialPrevBalances}
           isAdmin={isAdmin}
         />
       )}

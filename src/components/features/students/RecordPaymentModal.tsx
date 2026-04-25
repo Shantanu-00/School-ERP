@@ -323,11 +323,12 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="sm:col-span-2">
                           <label className="block text-sm font-medium text-slate-700 mb-1">Amount Received (₹)</label>
-                          <input 
-                            type="number" 
+                          <input
+                            type="number"
                             name="totalPaymentAmount"
                             value={totalPaymentAmount}
                             onChange={(e) => setTotalPaymentAmount(e.target.value)}
+                            onWheel={e => e.currentTarget.blur()}
                             placeholder="e.g. 30000"
                             className="w-full border-slate-200 rounded-md p-3 border focus:ring-2 focus:ring-blue-500 outline-none text-lg font-semibold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none shadow-sm"
                             min="1"
@@ -431,10 +432,11 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                               </div>
                               <div className="w-full sm:w-40 relative shrink-0 flex gap-2">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 font-medium"></span>
-                                <input 
-                                  type="number" 
+                                <input
+                                  type="number"
                                   value={alloc.amount}
                                   onChange={(e) => handleAllocationAmountChange(alloc.id, e.target.value)}
+                                  onWheel={e => e.currentTarget.blur()}
                                   className="w-full pl-8 border-slate-200 rounded-md p-2.5 border focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white shadow-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                   placeholder="Amount"
                                   min="1"
@@ -518,10 +520,11 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
 
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Amount ()</label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
+                      onWheel={e => e.currentTarget.blur()}
                       className={`w-full border-slate-200 rounded-md p-2.5 border outline-none focus:ring-2 shadow-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${pocketType === 'CREDIT' ? 'focus:ring-emerald-500' : 'focus:ring-orange-500'}`}
                       placeholder="e.g. 500"
                       min="1"

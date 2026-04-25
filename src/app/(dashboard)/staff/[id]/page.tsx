@@ -41,7 +41,7 @@ export default async function StaffProfilePage({
 
   const totalPaid = payrollHistory
     .filter((r: any) => r.status === 'Paid')
-    .reduce((s: number, r: any) => s + Number(r.net_paid), 0)
+    .reduce((s: number, r: any) => s + Number(r.amount_paid ?? r.net_paid ?? 0), 0)
 
   const statusBadge = (s: string | null) => {
     if (s === 'Paid') return 'bg-emerald-100 text-emerald-700 border-emerald-200'
@@ -163,7 +163,10 @@ export default async function StaffProfilePage({
                   <th className="px-4 py-3">Base</th>
                   <th className="px-4 py-3">Bonus</th>
                   <th className="px-4 py-3">Deduction</th>
-                  <th className="px-4 py-3">Net Paid</th>
+                  <th className="px-4 py-3">Net Payable</th>
+                  <th className="px-4 py-3">Arrears</th>
+                  <th className="px-4 py-3">Amt Paid</th>
+                  <th className="px-4 py-3">Carry Fwd</th>
                   <th className="px-4 py-3">Payment Date</th>
                   <th className="px-4 py-3">Mode</th>
                   <th className="px-4 py-3">Reference</th>
@@ -182,7 +185,16 @@ export default async function StaffProfilePage({
                     <td className="px-4 py-3 text-rose-600 font-medium">
                       {Number(rec.deduction_amount) > 0 ? `-${fmtINR(rec.deduction_amount)}` : '—'}
                     </td>
-                    <td className="px-4 py-3 font-bold text-slate-800">{fmtINR(rec.net_paid)}</td>
+                    <td className="px-4 py-3 font-semibold text-emerald-700">{fmtINR(rec.net_payable ?? rec.amount_paid ?? rec.net_paid ?? 0)}</td>
+                    <td className="px-4 py-3 text-violet-600 text-xs">
+                      {Number(rec.arrears_brought_forward || 0) > 0 ? `+${fmtINR(rec.arrears_brought_forward)}` : '—'}
+                    </td>
+                    <td className="px-4 py-3 font-bold text-slate-800">{fmtINR(rec.amount_paid ?? rec.net_paid ?? 0)}</td>
+                    <td className="px-4 py-3">
+                      {Number(rec.balance_carried_forward || 0) > 0
+                        ? <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">{fmtINR(rec.balance_carried_forward)}</span>
+                        : <span className="text-slate-300">—</span>}
+                    </td>
                     <td className="px-4 py-3 text-slate-500">
                       {rec.status === 'Paid' ? fmtDate(rec.payment_date) : '—'}
                     </td>

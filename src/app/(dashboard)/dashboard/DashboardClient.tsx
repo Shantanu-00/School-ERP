@@ -29,11 +29,11 @@ type StudentData = {
 
 type FormerData = { totalFormer: number; alumniCount: number; dropoutCount: number; withPendingCount: number; clearedCount: number; totalPendingAmount: number; totalCollectedAmount: number; students: FormerRow[] } | null
 
-type MonthBreakdown = { month: string; totalStaff: number; paidCount: number; pendingCount: number; draftCount: number; unprocCount: number; paidAmount: number; totalAmount: number; totalBonus: number; totalDeductions: number }
-type StaffRow = { id: string; name: string; designation: string; baseSalary: number; status: string; netPaid: number; bonus: number; deduction: number; paymentMode: string | null; remarks: string | null }
+type MonthBreakdown = { month: string; totalStaff: number; paidCount: number; pendingCount: number; draftCount: number; unprocCount: number; paidAmount: number; totalPayable: number; totalBonus: number; totalDeductions: number; totalArrears: number; totalCarriedFwd: number }
+type StaffRow = { id: string; name: string; designation: string; baseSalary: number; status: string; netPaid: number; amountPaid: number; netPayable: number; arrears: number; carryFwd: number; bonus: number; deduction: number; paymentMode: string | null; remarks: string | null }
 type StaffData = {
   currentMonth: string; activeCount: number; inactiveCount: number; resignedCount: number; terminatedCount: number; totalBaseSalary: number
-  thisMonth: { paidCount: number; pendingCount: number; draftCount: number; unprocCount: number; paidAmount: number; pendingAmount: number; draftAmount: number; totalProcessed: number }
+  thisMonth: { paidCount: number; pendingCount: number; draftCount: number; unprocCount: number; paidAmount: number; pendingAmount: number; draftAmount: number; totalCarriedFwd: number; totalArrears: number; totalProcessed: number }
   monthlyBreakdown: MonthBreakdown[]; staffDetail: StaffRow[]
 } | null
 
@@ -473,8 +473,16 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
   const csvFmr = () => f && dlCSV('former-students.csv', toCSV(['Student', 'Adm#', 'Status', 'Last Class', 'Last Year', 'Owed', 'Paid', 'Pending'], f.students.map(s => [s.name, s.admissionNumber, s.status, s.lastClass, s.lastYear, s.totalOwed + '', s.totalPaid + '', s.totalPending + ''])))
 
   // Derived staff numbers
-  const unprocessedBaseSalary = staff ? staff.staffDetail.filter(s => s.status === 'Not Processed').reduce((sum, s) => sum + s.baseSalary, 0) : 0
-  const processedCount = staff ? staff.thisMonth.paidCount + staff.thisMonth.pendingCount + staff.thisMonth.draftCount : 0
+  const unprocessedBaseSalary = staff
+    ? staff.staffDetail.filter(s => s.status === 'Not Processed').reduce((sum, s) => sum + s.baseSalary, 0)
+    : 0
+  const processedCount = staff
+    ? staff.thisMonth.paidCount + staff.thisMonth.pendingCount + staff.thisMonth.draftCount
+    : 0
+  // Total outstanding obligations = unprocessed base + pending/draft net_payable + carry-forwards from partial payments
+  const totalOutstandingObligation = staff
+    ? unprocessedBaseSalary + staff.thisMonth.pendingAmount + staff.thisMonth.draftAmount + staff.thisMonth.totalCarriedFwd
+    : 0
 
   return (
     <div className="flex flex-col gap-6 p-4 sm:p-6 pb-16 max-w-[1400px]">
@@ -548,9 +556,10 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
                       <p className="text-[10px] font-medium text-emerald-600/70 uppercase tracking-wider">Paid</p>
                       <p className="text-lg font-bold text-emerald-700 mt-1">{INR(staff.thisMonth.paidAmount)}</p>
                     </div>
-                    <div className={`${staff.thisMonth.unprocCount > 0 ? 'bg-amber-50/60' : 'bg-slate-50/80'} rounded-lg p-3`}>
-                      <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Remaining</p>
-                      <p className={`text-lg font-bold mt-1 ${unprocessedBaseSalary > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{unprocessedBaseSalary > 0 ? `~${INR(unprocessedBaseSalary)}` : 'All done'}</p>
+                    <div className={`${totalOutstandingObligation > 0 ? 'bg-amber-50/60' : 'bg-slate-50/80'} rounded-lg p-3`}>
+                      <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Outstanding</p>
+                      <p className={`text-lg font-bold mt-1 ${totalOutstandingObligation > 0 ? 'text-amber-600' : 'text-slate-400'}`}>{totalOutstandingObligation > 0 ? `~${INR(totalOutstandingObligation)}` : 'All done'}</p>
+                      {staff.thisMonth.totalCarriedFwd > 0 && <p className="text-[10px] text-violet-500 mt-0.5">{INR(staff.thisMonth.totalCarriedFwd)} carried fwd</p>}
                     </div>
                   </div>
                 ) : (
@@ -926,22 +935,48 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
           <Metric label="Active Staff" value={staff.activeCount} icon={Users} color="blue" href="/staff/payroll" />
           <Metric label="Left / Terminated" value={`${staff.resignedCount} / ${staff.terminatedCount}`} sub={`${staff.inactiveCount} total inactive`} icon={UserX} color="slate" />
           <Metric label="Total Base Salary" value={INR(staff.totalBaseSalary)} sub="Active staff this month (base only)" icon={IndianRupee} color="purple" />
-          <Metric label="Unprocessed Base" value={unprocessedBaseSalary > 0 ? `~${INR(unprocessedBaseSalary)}` : '₹0'} sub={`${staff.thisMonth.unprocCount} staff not yet in payroll`} icon={AlertTriangle} color={staff.thisMonth.unprocCount > 0 ? 'red' : 'green'} />
+          <Metric
+            label="Outstanding Obligations"
+            value={totalOutstandingObligation > 0 ? `~${INR(totalOutstandingObligation)}` : '₹0'}
+            sub={staff.thisMonth.unprocCount > 0
+              ? `${staff.thisMonth.unprocCount} unprocessed${staff.thisMonth.totalCarriedFwd > 0 ? ` + ${INR(staff.thisMonth.totalCarriedFwd)} carried fwd` : ''}`
+              : staff.thisMonth.totalCarriedFwd > 0 ? `${INR(staff.thisMonth.totalCarriedFwd)} carried forward to next month` : 'All fully settled'
+            }
+            icon={AlertTriangle}
+            color={totalOutstandingObligation > 0 ? 'red' : 'green'}
+          />
         </div>
 
         {/* This month status + financials grouped */}
         <div className="bg-white rounded-xl border border-slate-200/80 p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <span className="text-sm font-semibold text-slate-800">{staff.currentMonth} Payroll</span>
             <span className="text-sm font-bold text-slate-600">{processedCount}/{staff.activeCount} processed</span>
           </div>
 
           {/* Status dots */}
           <div className="flex flex-wrap gap-x-6 gap-y-2">
-            <div className="flex items-center gap-2"><Dot color="bg-emerald-500" /><span className="text-sm font-bold text-slate-800">{staff.thisMonth.paidCount}</span><span className="text-xs text-slate-400">Paid</span><span className="text-xs font-semibold text-emerald-600">{INR(staff.thisMonth.paidAmount)}</span></div>
+            <div className="flex items-center gap-2">
+              <Dot color="bg-emerald-500" />
+              <span className="text-sm font-bold text-slate-800">{staff.thisMonth.paidCount}</span>
+              <span className="text-xs text-slate-400">Paid</span>
+              <span className="text-xs font-semibold text-emerald-600">{INR(staff.thisMonth.paidAmount)}</span>
+              {staff.thisMonth.totalCarriedFwd > 0 && (
+                <span className="text-[10px] font-semibold text-violet-500 bg-violet-50 border border-violet-100 rounded px-1.5 py-0.5">
+                  {INR(staff.thisMonth.totalCarriedFwd)} carried fwd
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-2"><Dot color="bg-amber-500" /><span className="text-sm font-bold text-slate-800">{staff.thisMonth.pendingCount}</span><span className="text-xs text-slate-400">Pending</span>{staff.thisMonth.pendingAmount > 0 && <span className="text-xs font-semibold text-amber-600">{INR(staff.thisMonth.pendingAmount)}</span>}</div>
             <div className="flex items-center gap-2"><Dot color="bg-slate-300" /><span className="text-sm font-bold text-slate-800">{staff.thisMonth.draftCount}</span><span className="text-xs text-slate-400">Draft</span>{staff.thisMonth.draftAmount > 0 && <span className="text-xs font-semibold text-slate-500">{INR(staff.thisMonth.draftAmount)}</span>}</div>
             <div className="flex items-center gap-2"><Dot color="bg-red-400" /><span className="text-sm font-bold text-slate-800">{staff.thisMonth.unprocCount}</span><span className="text-xs text-slate-400">Not Started</span></div>
+            {staff.thisMonth.totalArrears > 0 && (
+              <div className="flex items-center gap-2">
+                <Dot color="bg-violet-400" />
+                <span className="text-xs text-slate-400">Arrears included this month</span>
+                <span className="text-xs font-semibold text-violet-600">{INR(staff.thisMonth.totalArrears)}</span>
+              </div>
+            )}
           </div>
 
           {/* Progress bar */}
@@ -956,16 +991,78 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
 
         {/* Monthly breakdown (multi-month range) */}
         {staff.monthlyBreakdown.length > 1 && <Section title="Monthly Breakdown">
-          <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-sm"><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-slate-50/80 border-b border-slate-100"><Th className="pl-5 text-left">Month</Th><Th className="text-center">Paid</Th><Th className="text-center">Pending</Th><Th className="text-center">Draft</Th><Th className="text-center">Unprocessed</Th><Th className="text-right">Paid Amt</Th><Th className="text-right">Bonuses</Th><Th className="text-right pr-5">Deductions</Th></tr></thead><tbody>
-            {staff.monthlyBreakdown.map(m => <tr key={m.month} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors"><td className="p-3 pl-5 font-semibold text-slate-800">{m.month}</td><td className="p-3 text-center"><span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded text-xs font-bold">{m.paidCount}</span></td><td className="p-3 text-center">{m.pendingCount > 0 ? <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-xs font-bold">{m.pendingCount}</span> : <span className="text-slate-300">0</span>}</td><td className="p-3 text-center">{m.draftCount > 0 ? <span className="text-slate-500 text-xs font-bold">{m.draftCount}</span> : <span className="text-slate-300">0</span>}</td><td className="p-3 text-center">{m.unprocCount > 0 ? <span className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs font-bold">{m.unprocCount}</span> : <span className="text-slate-300">0</span>}</td><td className="p-3 text-right font-semibold text-emerald-600">{INR(m.paidAmount)}</td><td className="p-3 text-right">{m.totalBonus > 0 ? <span className="text-blue-600">+{INR(m.totalBonus)}</span> : <span className="text-slate-300">—</span>}</td><td className="p-3 text-right pr-5">{m.totalDeductions > 0 ? <span className="text-red-500">-{INR(m.totalDeductions)}</span> : <span className="text-slate-300">—</span>}</td></tr>)}
+          <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-sm"><div className="overflow-x-auto"><table className="w-full text-sm">
+            <thead><tr className="bg-slate-50/80 border-b border-slate-100">
+              <Th className="pl-5 text-left">Month</Th>
+              <Th className="text-center">Paid</Th>
+              <Th className="text-center">Pending</Th>
+              <Th className="text-center">Draft</Th>
+              <Th className="text-center">Unprocessed</Th>
+              <Th className="text-right">Paid Amt</Th>
+              <Th className="text-right">Arrears In</Th>
+              <Th className="text-right">Carry Fwd</Th>
+              <Th className="text-right">Bonuses</Th>
+              <Th className="text-right pr-5">Deductions</Th>
+            </tr></thead>
+            <tbody>
+            {staff.monthlyBreakdown.map(m => (
+              <tr key={m.month} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors">
+                <td className="p-3 pl-5 font-semibold text-slate-800">{m.month}</td>
+                <td className="p-3 text-center"><span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded text-xs font-bold">{m.paidCount}</span></td>
+                <td className="p-3 text-center">{m.pendingCount > 0 ? <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded text-xs font-bold">{m.pendingCount}</span> : <span className="text-slate-300">0</span>}</td>
+                <td className="p-3 text-center">{m.draftCount > 0 ? <span className="text-slate-500 text-xs font-bold">{m.draftCount}</span> : <span className="text-slate-300">0</span>}</td>
+                <td className="p-3 text-center">{m.unprocCount > 0 ? <span className="px-1.5 py-0.5 bg-red-50 text-red-600 rounded text-xs font-bold">{m.unprocCount}</span> : <span className="text-slate-300">0</span>}</td>
+                <td className="p-3 text-right font-semibold text-emerald-600">{INR(m.paidAmount)}</td>
+                <td className="p-3 text-right">{m.totalArrears > 0 ? <span className="text-violet-600 font-medium">+{INR(m.totalArrears)}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right">{m.totalCarriedFwd > 0 ? <span className="text-amber-600 font-medium">{INR(m.totalCarriedFwd)}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right">{m.totalBonus > 0 ? <span className="text-blue-600">+{INR(m.totalBonus)}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right pr-5">{m.totalDeductions > 0 ? <span className="text-red-500">-{INR(m.totalDeductions)}</span> : <span className="text-slate-300">—</span>}</td>
+              </tr>
+            ))}
           </tbody></table></div></div>
         </Section>}
 
         {/* Per-staff detail */}
         <Section title={`Staff Detail — ${staff.currentMonth}`} action={<Link href="/staff/payroll" className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition"><ExternalLink size={13} /> Manage</Link>}>
-          <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-sm"><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-slate-50/80 border-b border-slate-100"><Th className="pl-5 text-left">Staff</Th><Th className="text-left">Role</Th><Th className="text-right">Base</Th><Th className="text-right">Bonus</Th><Th className="text-right">Deduction</Th><Th className="text-right">Net</Th><Th className="text-center pr-5">Status</Th></tr></thead><tbody>
-            {staff.staffDetail.map(s => <tr key={s.id} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors"><td className="p-3 pl-5"><Link href={`/staff/${s.id}`} className="hover:text-blue-600 transition-colors font-medium text-slate-800">{s.name}</Link></td><td className="p-3 text-xs text-slate-500">{s.designation || '—'}</td><td className="p-3 text-right text-slate-700">{INR(s.baseSalary)}</td><td className="p-3 text-right">{s.bonus > 0 ? <span className="text-blue-600">+{INR(s.bonus)}</span> : <span className="text-slate-300">—</span>}</td><td className="p-3 text-right">{s.deduction > 0 ? <span className="text-red-500">-{INR(s.deduction)}</span> : <span className="text-slate-300">—</span>}</td><td className="p-3 text-right font-bold text-slate-800">{s.netPaid > 0 ? INR(s.netPaid) : <span className="text-slate-300">—</span>}</td><td className="p-3 text-center pr-5"><PayrollBadge status={s.status} /></td></tr>)}
-            <tr className="bg-slate-50/80 font-semibold text-sm"><td className="p-3 pl-5 text-slate-700" colSpan={2}>{staff.staffDetail.length} staff</td><td className="p-3 text-right text-slate-700">{INR(staff.totalBaseSalary)}</td><td className="p-3 text-right text-blue-600">{(() => { const t = staff.staffDetail.reduce((s, x) => s + x.bonus, 0); return t > 0 ? '+' + INR(t) : '—' })()}</td><td className="p-3 text-right text-red-500">{(() => { const t = staff.staffDetail.reduce((s, x) => s + x.deduction, 0); return t > 0 ? '-' + INR(t) : '—' })()}</td><td className="p-3 text-right text-slate-800">{INR(staff.thisMonth.totalProcessed)}</td><td className="p-3"></td></tr>
+          <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-sm"><div className="overflow-x-auto"><table className="w-full text-sm">
+            <thead><tr className="bg-slate-50/80 border-b border-slate-100">
+              <Th className="pl-5 text-left">Staff</Th>
+              <Th className="text-left">Role</Th>
+              <Th className="text-right">Base</Th>
+              <Th className="text-right">Bonus</Th>
+              <Th className="text-right">Deduction</Th>
+              <Th className="text-right">Arrears</Th>
+              <Th className="text-right">Net Payable</Th>
+              <Th className="text-right">Paid</Th>
+              <Th className="text-right">Carry Fwd</Th>
+              <Th className="text-center pr-5">Status</Th>
+            </tr></thead>
+            <tbody>
+            {staff.staffDetail.map(s => (
+              <tr key={s.id} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors">
+                <td className="p-3 pl-5"><Link href={`/staff/${s.id}`} className="hover:text-blue-600 transition-colors font-medium text-slate-800">{s.name}</Link></td>
+                <td className="p-3 text-xs text-slate-500">{s.designation || '—'}</td>
+                <td className="p-3 text-right text-slate-700">{INR(s.baseSalary)}</td>
+                <td className="p-3 text-right">{s.bonus > 0 ? <span className="text-blue-600">+{INR(s.bonus)}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right">{s.deduction > 0 ? <span className="text-red-500">-{INR(s.deduction)}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right">{s.arrears > 0 ? <span className="text-violet-600 font-medium">+{INR(s.arrears)}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right font-semibold text-emerald-700">{s.netPayable > 0 ? INR(s.netPayable) : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right font-bold text-slate-800">{s.amountPaid > 0 ? INR(s.amountPaid) : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-right">{s.carryFwd > 0 ? <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 whitespace-nowrap">{INR(s.carryFwd)}</span> : <span className="text-slate-300">—</span>}</td>
+                <td className="p-3 text-center pr-5"><PayrollBadge status={s.status} /></td>
+              </tr>
+            ))}
+            <tr className="bg-slate-50/80 font-semibold text-sm">
+              <td className="p-3 pl-5 text-slate-700" colSpan={2}>{staff.staffDetail.length} staff</td>
+              <td className="p-3 text-right text-slate-700">{INR(staff.totalBaseSalary)}</td>
+              <td className="p-3 text-right text-blue-600">{(() => { const t = staff.staffDetail.reduce((s, x) => s + x.bonus, 0); return t > 0 ? '+' + INR(t) : '—' })()}</td>
+              <td className="p-3 text-right text-red-500">{(() => { const t = staff.staffDetail.reduce((s, x) => s + x.deduction, 0); return t > 0 ? '-' + INR(t) : '—' })()}</td>
+              <td className="p-3 text-right text-violet-600">{(() => { const t = staff.staffDetail.reduce((s, x) => s + x.arrears, 0); return t > 0 ? '+' + INR(t) : '—' })()}</td>
+              <td className="p-3 text-right text-emerald-700">{INR(staff.staffDetail.reduce((s, x) => s + x.netPayable, 0))}</td>
+              <td className="p-3 text-right text-slate-800">{INR(staff.thisMonth.paidAmount)}</td>
+              <td className="p-3 text-right text-amber-600">{(() => { const t = staff.staffDetail.reduce((s, x) => s + x.carryFwd, 0); return t > 0 ? INR(t) : '—' })()}</td>
+              <td className="p-3"></td>
+            </tr>
           </tbody></table></div></div>
         </Section>
       </div>)}

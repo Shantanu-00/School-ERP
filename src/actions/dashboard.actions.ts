@@ -335,74 +335,106 @@ export async function getDashboardStaffData(range: string = 'current') {
 
   const { data: payroll } = await supabase
     .from('teacher_payroll')
-    .select('id, teacher_id, month_year, base_amount, bonus_amount, deduction_amount, net_paid, payment_date, status, payment_mode, remarks')
+    .select('id, teacher_id, month_year, base_amount, bonus_amount, deduction_amount, arrears_brought_forward, net_payable, amount_paid, balance_carried_forward, payment_date, status, payment_mode, remarks')
     .in('month_year', monthKeys)
 
   const allPayroll = payroll || []
 
+  // Canonical accessors — handle old rows (pre-arrears migration) gracefully.
+  // amount_paid  = actual cash that left the school for this row (may be partial)
+  // net_payable  = total owed this month incl. arrears (obligation, not disbursement)
+  // balance_carried_forward = net_payable - amount_paid, rolls to next month
+  const rowAmountPaid   = (r: any): number => Number(r.amount_paid   ?? r.net_payable ?? 0)
+  const rowNetPayable   = (r: any): number => Number(r.net_payable   ?? r.amount_paid ?? 0)
+  const rowArrears      = (r: any): number => Number(r.arrears_brought_forward ?? 0)
+  const rowCarryFwd     = (r: any): number => Number(r.balance_carried_forward ?? 0)
+
   // Current month stats
   const currentMonthRecords = allPayroll.filter(r => r.month_year === currentMonthKey)
-  const paidThisMonth = currentMonthRecords.filter(r => r.status === 'Paid')
-  const pendingThisMonth = currentMonthRecords.filter(r => r.status === 'Pending Approval')
-  const draftThisMonth = currentMonthRecords.filter(r => r.status === 'Draft')
+  const paidRows    = currentMonthRecords.filter(r => r.status === 'Paid')
+  const pendingRows = currentMonthRecords.filter(r => r.status === 'Pending Approval')
+  const draftRows   = currentMonthRecords.filter(r => r.status === 'Draft')
 
-  const paidAmount = paidThisMonth.reduce((s, r) => s + Number(r.net_paid), 0)
-  const pendingAmount = pendingThisMonth.reduce((s, r) => s + Number(r.net_paid), 0)
-  const draftAmount = draftThisMonth.reduce((s, r) => s + Number(r.net_paid), 0)
+  // "Paid amount" = cash actually disbursed to staff whose status is Paid.
+  // "Pending/Draft amount" = the full obligation (net_payable) for those rows —
+  //   not "amount_paid" because they haven't been paid yet.
+  const paidAmount    = paidRows   .reduce((s, r) => s + rowAmountPaid(r), 0)
+  const pendingAmount = pendingRows.reduce((s, r) => s + rowNetPayable(r), 0)
+  const draftAmount   = draftRows  .reduce((s, r) => s + rowNetPayable(r), 0)
+
+  // Balance carry-forwards from Paid rows that were partially settled this month.
+  const totalCarriedForwardThisMonth = paidRows.reduce((s, r) => s + rowCarryFwd(r), 0)
+  // Total arrears absorbed this month across all rows.
+  const totalArrearsThisMonth = currentMonthRecords.reduce((s, r) => s + rowArrears(r), 0)
 
   // Month-by-month breakdown for the range
   const monthlyBreakdown = monthKeys.map(mk => {
-    const recs = allPayroll.filter(r => r.month_year === mk)
-    const paid = recs.filter(r => r.status === 'Paid')
+    const recs    = allPayroll.filter(r => r.month_year === mk)
+    const paid    = recs.filter(r => r.status === 'Paid')
     const pending = recs.filter(r => r.status === 'Pending Approval')
-    const draft = recs.filter(r => r.status === 'Draft')
+    const draft   = recs.filter(r => r.status === 'Draft')
     return {
-      month: mk,
+      month:      mk,
       totalStaff: active.length,
-      paidCount: paid.length,
+      paidCount:    paid.length,
       pendingCount: pending.length,
-      draftCount: draft.length,
-      unprocCount: active.length - recs.length,
-      paidAmount: paid.reduce((s, r) => s + Number(r.net_paid), 0),
-      totalAmount: recs.reduce((s, r) => s + Number(r.net_paid), 0),
-      totalBonus: recs.reduce((s, r) => s + Number(r.bonus_amount), 0),
-      totalDeductions: recs.reduce((s, r) => s + Number(r.deduction_amount), 0),
+      draftCount:   draft.length,
+      unprocCount:  active.length - recs.length,
+      // "Paid Amt" = cash that actually went out for Paid rows
+      paidAmount:   paid.reduce((s, r) => s + rowAmountPaid(r), 0),
+      // "Total Payable" = full obligation for all rows (useful for budget planning)
+      totalPayable: recs.reduce((s, r) => s + rowNetPayable(r), 0),
+      totalBonus:       recs.reduce((s, r) => s + Number(r.bonus_amount), 0),
+      totalDeductions:  recs.reduce((s, r) => s + Number(r.deduction_amount), 0),
+      totalArrears:     recs.reduce((s, r) => s + rowArrears(r),  0),
+      totalCarriedFwd:  paid.reduce((s, r) => s + rowCarryFwd(r), 0),
     }
   })
 
-  // Per-staff current month detail
+  // Per-staff current month detail — carry all 4 new ledger fields
   const staffDetail = active.map(t => {
     const rec = currentMonthRecords.find(r => r.teacher_id === t.id)
     return {
-      id: t.id,
-      name: `${t.first_name} ${t.last_name}`,
+      id:          t.id,
+      name:        `${t.first_name} ${t.last_name}`,
       designation: t.designation || '',
-      baseSalary: Number(t.base_salary),
-      status: rec?.status || 'Not Processed',
-      netPaid: rec ? Number(rec.net_paid) : 0,
-      bonus: rec ? Number(rec.bonus_amount) : 0,
-      deduction: rec ? Number(rec.deduction_amount) : 0,
+      baseSalary:  Number(t.base_salary),
+      status:      rec?.status || 'Not Processed',
+      // amountPaid — what was actually paid (0 if not yet processed)
+      amountPaid:  rec ? rowAmountPaid(rec)  : 0,
+      // netPayable — total obligation this month incl. arrears
+      netPayable:  rec ? rowNetPayable(rec)  : 0,
+      arrears:     rec ? rowArrears(rec)     : 0,
+      carryFwd:    rec ? rowCarryFwd(rec)    : 0,
+      bonus:       rec ? Number(rec.bonus_amount)     : 0,
+      deduction:   rec ? Number(rec.deduction_amount) : 0,
       paymentMode: rec?.payment_mode || null,
-      remarks: rec?.remarks || null,
+      remarks:     rec?.remarks      || null,
+      // Keep netPaid as alias so callers using the old field name still work
+      netPaid:     rec ? rowAmountPaid(rec)  : 0,
     }
   })
 
   return {
     data: {
-      currentMonth: currentMonthKey,
-      activeCount: active.length,
-      inactiveCount: inactive.length,
-      resignedCount: inactive.filter(t => t.status === 'Resigned').length,
+      currentMonth:    currentMonthKey,
+      activeCount:     active.length,
+      inactiveCount:   inactive.length,
+      resignedCount:   inactive.filter(t => t.status === 'Resigned').length,
       terminatedCount: inactive.filter(t => t.status === 'Terminated').length,
       totalBaseSalary,
       thisMonth: {
-        paidCount: paidThisMonth.length,
-        pendingCount: pendingThisMonth.length,
-        draftCount: draftThisMonth.length,
-        unprocCount: active.length - currentMonthRecords.length,
-        paidAmount,
-        pendingAmount,
-        draftAmount,
+        paidCount:    paidRows.length,
+        pendingCount: pendingRows.length,
+        draftCount:   draftRows.length,
+        unprocCount:  active.length - currentMonthRecords.length,
+        // Financial dimensions kept semantically correct
+        paidAmount,           // cash actually out the door
+        pendingAmount,        // obligation for rows awaiting approval
+        draftAmount,          // obligation for draft rows
+        totalCarriedFwd:      totalCarriedForwardThisMonth, // arrears rolling to next month
+        totalArrears:         totalArrearsThisMonth,        // arrears absorbed this month
+        // totalProcessed = all obligations entered this month (for progress bar)
         totalProcessed: paidAmount + pendingAmount + draftAmount,
       },
       monthlyBreakdown,
@@ -580,7 +612,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
       .select('id, transaction_type, amount, description, created_at, payment_mode, transaction_reference, students(first_name, last_name, admission_number), staff:logged_by(name)')
       .gte('created_at', `${dateFrom}T00:00:00`).lte('created_at', `${dateTo}T23:59:59`),
     supabase.from('teacher_payroll')
-      .select('id, net_paid, payment_date, payment_mode, remarks, teachers(first_name, last_name), logged_by_staff:staff!logged_by(name)')
+      .select('id, amount_paid, net_payable, payment_date, payment_mode, remarks, teachers(first_name, last_name), logged_by_staff:staff!logged_by(name)')
       .gte('payment_date', dateFrom).lte('payment_date', dateTo).eq('status', 'Paid'),
     supabase.from('general_expenses')
       .select('id, amount, date_incurred, category, description, payment_mode, payee_name, voucher_number, logged_by_staff:staff!logged_by(name)')
@@ -592,7 +624,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
     supabase.from('fee_payments').select('amount_paid'),
     supabase.from('other_income').select('amount'),
     supabase.from('pocket_money_transactions').select('student_id, transaction_type, amount'),
-    supabase.from('teacher_payroll').select('net_paid').eq('status', 'Paid'),
+    supabase.from('teacher_payroll').select('amount_paid, net_payable').eq('status', 'Paid'),
     supabase.from('general_expenses').select('amount'),
     supabase.from('fee_invoices').select('id, total_amount, status, fee_payments(amount_paid)').in('status', ['Unpaid', 'Partial']),
   ])
@@ -610,7 +642,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   const feeTotal = fees.reduce((s, f: any) => s + Number(f.amount_paid), 0)
   const incomeTotal = incomeRows.reduce((s, i: any) => s + Number(i.amount), 0)
   const pmCreditTotal = pmCredits.reduce((s, t: any) => s + Number(t.amount), 0)
-  const payrollTotal = payrollRows.reduce((s, p: any) => s + Number(p.net_paid), 0)
+  const payrollTotal = payrollRows.reduce((s, p: any) => s + Number(p.amount_paid ?? p.net_payable ?? 0), 0)
   const expenseTotal = expenseRows.reduce((s, e: any) => s + Number(e.amount), 0)
   const pmDebitTotal = pmDebits.reduce((s, t: any) => s + Number(t.amount), 0)
 
@@ -649,7 +681,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   const cumPm = cumPmRes.data || []
   const cumPmCr = cumPm.filter((t: any) => t.transaction_type === 'CREDIT').reduce((s, t: any) => s + Number(t.amount), 0)
   const cumPmDr = cumPm.filter((t: any) => t.transaction_type === 'DEBIT').reduce((s, t: any) => s + Number(t.amount), 0)
-  const cumPayrollTotal = (cumPayrollRes.data || []).reduce((s, p: any) => s + Number(p.net_paid), 0)
+  const cumPayrollTotal = (cumPayrollRes.data || []).reduce((s, p: any) => s + Number(p.amount_paid ?? p.net_payable ?? 0), 0)
   const cumExpenseTotal = (cumExpenseRes.data || []).reduce((s, e: any) => s + Number(e.amount), 0)
 
   // Per-student pocket money balances
@@ -689,7 +721,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   for (const p of payrollRows) {
     const teacher = Array.isArray((p as any).teachers) ? (p as any).teachers[0] : (p as any).teachers
     const stf = Array.isArray((p as any).logged_by_staff) ? (p as any).logged_by_staff[0] : (p as any).logged_by_staff
-    allTx.push({ id: p.id, date: (p as any).payment_date, source: 'Payroll', description: teacher ? `${teacher.first_name} ${teacher.last_name}${(p as any).remarks ? ` — ${(p as any).remarks}` : ''}` : 'Payroll', amount: Number((p as any).net_paid), direction: 'out', method: (p as any).payment_mode, loggedBy: stf?.name || null })
+    allTx.push({ id: p.id, date: (p as any).payment_date, source: 'Payroll', description: teacher ? `${teacher.first_name} ${teacher.last_name}${(p as any).remarks ? ` — ${(p as any).remarks}` : ''}` : 'Payroll', amount: Number((p as any).amount_paid ?? (p as any).net_payable ?? 0), direction: 'out', method: (p as any).payment_mode, loggedBy: stf?.name || null })
   }
   for (const e of expenseRows) {
     const stf = Array.isArray((e as any).logged_by_staff) ? (e as any).logged_by_staff[0] : (e as any).logged_by_staff

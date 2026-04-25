@@ -88,7 +88,7 @@ function applyDiscountClient(base: number, mode: string, value: number) {
 }
 
 const selectCls = 'h-9 px-3 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white disabled:opacity-50'
-const inputCls = 'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white'
+const inputCls = 'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
 
 const DISCOUNT_TYPES = ['None', 'RTE', 'Staff Child', 'Sibling', 'Management Discount', 'Other']
 
@@ -295,6 +295,7 @@ function InvoicePanel({
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold">₹</span>
                 <input type="number" min={0} value={template.amount} onChange={e => set({ amount: e.target.value })}
+                  onWheel={e => e.currentTarget.blur()}
                   placeholder="0" className={`${inputCls} pl-6`} />
               </div>
               <p className="text-[10px] text-slate-400 mt-1">Same amount for all selected students.</p>
@@ -490,7 +491,7 @@ function PocketPanel({
               <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Amount (₹) *</label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold">₹</span>
-                <input type="number" min={0} value={config.flatAmount} onChange={e => set({ flatAmount: e.target.value })} placeholder="0" className={`${inputCls} pl-6`} />
+                <input type="number" min={0} value={config.flatAmount} onChange={e => set({ flatAmount: e.target.value })} onWheel={e => e.currentTarget.blur()} placeholder="0" className={`${inputCls} pl-6`} />
               </div>
             </div>
             <div>
@@ -577,7 +578,8 @@ function DiscountCell({
           </select>
           <input type="number" min={0} value={current.discount_value}
             onChange={e => onChange({ ...current, discount_value: e.target.value })}
-            className="h-7 px-2 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white w-16 text-right" />
+            onWheel={e => e.currentTarget.blur()}
+            className="h-7 px-2 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white w-16 text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
         </div>
       )}
 
@@ -841,8 +843,9 @@ function PocketTable({
                             if (!isSelected) onToggle(s.id)
                             setConfig({ perAmounts: { ...config.perAmounts, [s.id]: e.target.value } })
                           }}
+                          onWheel={e => e.currentTarget.blur()}
                           placeholder="0"
-                          className={`pl-5 pr-2 py-1.5 text-sm font-bold border rounded-lg w-24 text-right focus:outline-none focus:ring-2 ${isLowBal ? 'border-rose-300 bg-rose-50 focus:ring-rose-400 text-rose-800' : 'border-slate-200 bg-white focus:ring-blue-400 text-slate-800'}`} />
+                          className={`pl-5 pr-2 py-1.5 text-sm font-bold border rounded-lg w-24 text-right focus:outline-none focus:ring-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${isLowBal ? 'border-rose-300 bg-rose-50 focus:ring-rose-400 text-rose-800' : 'border-slate-200 bg-white focus:ring-blue-400 text-slate-800'}`} />
                       </div>
                     </div>
                   </td>

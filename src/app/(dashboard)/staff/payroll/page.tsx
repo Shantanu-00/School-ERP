@@ -29,7 +29,7 @@ export default async function StaffPayrollPage() {
   }
 
   const month = currentMonthYear()
-  const { teachers, payrollRecords, error } = await getPayrollForMonth(month)
+  const { teachers, payrollRecords, prevMonthBalances, error } = await getPayrollForMonth(month)
 
   if (error) {
     return (
@@ -46,6 +46,7 @@ export default async function StaffPayrollPage() {
         initialTeachers={teachers}
         initialRecords={payrollRecords}
         initialMonth={month}
+        initialPrevBalances={prevMonthBalances}
         userRole={userRole as 'Admin' | 'Accountant'}
       />
     </>

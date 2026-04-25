@@ -29,12 +29,28 @@ const TEACHER_FIELDS = `
   profile_picture_url
 `
 
+const PAYROLL_FIELDS = `
+  id, teacher_id, month_year,
+  base_amount, bonus_amount, deduction_amount,
+  arrears_brought_forward, net_payable, amount_paid, balance_carried_forward,
+  payment_date, remarks, status, payment_mode, transaction_reference
+`
+
+function prevMonthYear(my: string): string {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const [mon, yr] = my.split('-')
+  const mi = MONTHS.indexOf(mon)
+  if (mi === 0) return `Dec-${parseInt(yr, 10) - 1}`
+  return `${MONTHS[mi - 1]}-${yr}`
+}
+
 export async function getPayrollForMonth(monthYear: string) {
   const { error, supabase } = await getAuthStaff(['Admin', 'Accountant'])
-  if (error || !supabase) return { error, teachers: [], payrollRecords: [] }
+  if (error || !supabase) return { error, teachers: [], payrollRecords: [], prevMonthBalances: {} as Record<string, number> }
 
-  // Fetch ALL active teachers + any payroll records for that month
-  const [teachersRes, payrollRes] = await Promise.all([
+  const prevMonth = prevMonthYear(monthYear)
+
+  const [teachersRes, payrollRes, prevRes] = await Promise.all([
     supabase
       .from('teachers')
       .select(TEACHER_FIELDS)
@@ -42,14 +58,23 @@ export async function getPayrollForMonth(monthYear: string) {
       .order('first_name'),
     supabase
       .from('teacher_payroll')
-      .select('id, teacher_id, month_year, base_amount, bonus_amount, deduction_amount, net_paid, payment_date, remarks, status, payment_mode, transaction_reference')
-      .eq('month_year', monthYear)
+      .select(PAYROLL_FIELDS)
+      .eq('month_year', monthYear),
+    supabase
+      .from('teacher_payroll')
+      .select('teacher_id, balance_carried_forward')
+      .eq('month_year', prevMonth),
   ])
 
-  if (teachersRes.error) return { error: teachersRes.error.message, teachers: [], payrollRecords: [] }
-  if (payrollRes.error) return { error: payrollRes.error.message, teachers: [], payrollRecords: [] }
+  if (teachersRes.error) return { error: teachersRes.error.message, teachers: [], payrollRecords: [], prevMonthBalances: {} as Record<string, number> }
+  if (payrollRes.error) return { error: payrollRes.error.message, teachers: [], payrollRecords: [], prevMonthBalances: {} as Record<string, number> }
 
-  return { error: null, teachers: teachersRes.data || [], payrollRecords: payrollRes.data || [] }
+  const prevMonthBalances: Record<string, number> = {}
+  for (const r of (prevRes.data || [])) {
+    prevMonthBalances[r.teacher_id] = Number(r.balance_carried_forward || 0)
+  }
+
+  return { error: null, teachers: teachersRes.data || [], payrollRecords: payrollRes.data || [], prevMonthBalances }
 }
 
 export async function getAllTeachers() {
@@ -77,9 +102,9 @@ export async function getStaffProfile(teacherId: string) {
       .single(),
     supabase
       .from('teacher_payroll')
-      .select('id, month_year, base_amount, bonus_amount, deduction_amount, net_paid, payment_date, remarks, status, payment_mode, transaction_reference')
+      .select(PAYROLL_FIELDS)
       .eq('teacher_id', teacherId)
-      .order('payment_date', { ascending: false })
+      .order('payment_date', { ascending: false }),
   ])
 
   if (teacherRes.error) return { error: teacherRes.error.message, teacher: null, payrollHistory: [] }
@@ -87,7 +112,7 @@ export async function getStaffProfile(teacherId: string) {
   return {
     error: null,
     teacher: teacherRes.data,
-    payrollHistory: historyRes.data || []
+    payrollHistory: historyRes.data || [],
   }
 }
 
@@ -98,7 +123,10 @@ export async function savePayrollDrafts(
     baseAmount: number
     bonusAmount: number
     deductionAmount: number
-    netPaid: number
+    arrearsAmount: number
+    netPayable: number
+    amountPaid: number
+    balanceCarriedForward: number
     remarks: string
     status: string
     dbRowId?: string
@@ -122,7 +150,10 @@ export async function savePayrollDrafts(
           base_amount: r.baseAmount,
           bonus_amount: r.bonusAmount,
           deduction_amount: r.deductionAmount,
-          net_paid: r.netPaid,
+          arrears_brought_forward: r.arrearsAmount,
+          net_payable: r.netPayable,
+          amount_paid: r.amountPaid,
+          balance_carried_forward: r.balanceCarriedForward,
           payment_date: new Date().toISOString().split('T')[0],
           remarks: r.remarks || null,
           status: r.status,
@@ -142,13 +173,16 @@ export async function savePayrollDrafts(
         base_amount: row.baseAmount,
         bonus_amount: row.bonusAmount,
         deduction_amount: row.deductionAmount,
-        net_paid: row.netPaid,
+        arrears_brought_forward: row.arrearsAmount,
+        net_payable: row.netPayable,
+        amount_paid: row.amountPaid,
+        balance_carried_forward: row.balanceCarriedForward,
         remarks: row.remarks || null,
         status: row.status,
         logged_by: staff.id,
       })
       .eq('id', row.dbRowId)
-      .neq('status', 'Paid') // Never overwrite a Paid row
+      .neq('status', 'Paid')
 
     if (updateErr) return { error: updateErr.message, insertedRows: [] }
   }
@@ -164,7 +198,10 @@ export async function markPayrollAsPaid(params: {
   baseAmount: number
   bonusAmount: number
   deductionAmount: number
-  netPaid: number
+  arrearsAmount: number
+  netPayable: number
+  amountPaid: number
+  balanceCarriedForward: number
   remarks: string
   paymentDate: string
   paymentMode: string
@@ -173,21 +210,26 @@ export async function markPayrollAsPaid(params: {
   const { error, staff, supabase } = await getAuthStaff(['Admin', 'Accountant'])
   if (error || !supabase || !staff) return { error: error || 'Unauthorized' }
 
+  const payload = {
+    base_amount: params.baseAmount,
+    bonus_amount: params.bonusAmount,
+    deduction_amount: params.deductionAmount,
+    arrears_brought_forward: params.arrearsAmount,
+    net_payable: params.netPayable,
+    amount_paid: params.amountPaid,
+    balance_carried_forward: params.balanceCarriedForward,
+    payment_date: params.paymentDate,
+    remarks: params.remarks || null,
+    status: 'Paid',
+    payment_mode: params.paymentMode,
+    transaction_reference: params.transactionReference || null,
+    logged_by: staff.id,
+  }
+
   if (params.dbRowId) {
     const { error: updateErr } = await supabase
       .from('teacher_payroll')
-      .update({
-        base_amount: params.baseAmount,
-        bonus_amount: params.bonusAmount,
-        deduction_amount: params.deductionAmount,
-        net_paid: params.netPaid,
-        payment_date: params.paymentDate,
-        remarks: params.remarks || null,
-        status: 'Paid',
-        payment_mode: params.paymentMode,
-        transaction_reference: params.transactionReference || null,
-        logged_by: staff.id,
-      })
+      .update(payload)
       .eq('id', params.dbRowId)
 
     if (updateErr) return { error: updateErr.message }
@@ -197,16 +239,7 @@ export async function markPayrollAsPaid(params: {
       .insert({
         teacher_id: params.teacherId,
         month_year: params.monthYear,
-        base_amount: params.baseAmount,
-        bonus_amount: params.bonusAmount,
-        deduction_amount: params.deductionAmount,
-        net_paid: params.netPaid,
-        payment_date: params.paymentDate,
-        remarks: params.remarks || null,
-        status: 'Paid',
-        payment_mode: params.paymentMode,
-        transaction_reference: params.transactionReference || null,
-        logged_by: staff.id,
+        ...payload,
       })
 
     if (insertErr) return { error: insertErr.message }

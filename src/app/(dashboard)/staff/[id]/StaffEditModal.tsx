@@ -39,6 +39,7 @@ function Field({
         name={name} type={type} required={required}
         defaultValue={defaultValue ?? ''}
         placeholder={placeholder}
+        onWheel={type === 'number' ? e => e.currentTarget.blur() : undefined}
         className="w-full border border-slate-200 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
     </div>

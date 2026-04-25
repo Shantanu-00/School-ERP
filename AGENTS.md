@@ -511,3 +511,29 @@ ALTER TABLE public.pocket_money_transactions
   
   -- Links to their physical receipt book or internal canteen chit
   ADD COLUMN internal_voucher_number TEXT;
+
+  -- Step 1: Rename net_paid to amount_paid (What actually leaves the bank)
+ALTER TABLE public.teacher_payroll 
+RENAME COLUMN net_paid TO amount_paid;
+
+-- Step 2: Add the Arrears and Ledger columns
+ALTER TABLE public.teacher_payroll
+  -- Money owed to the teacher from previous unpaid months
+  ADD COLUMN arrears_brought_forward NUMERIC(10,2) DEFAULT 0.00,
+  
+  -- The true total owed THIS month (Base + Bonus + Arrears - Deductions)
+  ADD COLUMN net_payable NUMERIC(10,2),
+  
+  -- What is left unpaid to be added to next month (net_payable - amount_paid)
+  ADD COLUMN balance_carried_forward NUMERIC(10,2) DEFAULT 0.00;
+
+-- Step 3: Backfill the new 'net_payable' column for existing historical data 
+-- (Assuming historical records were paid in full to keep your old data clean)
+UPDATE public.teacher_payroll
+SET net_payable = amount_paid,
+    balance_carried_forward = 0.00
+WHERE net_payable IS NULL;
+
+-- Step 4: Now enforce the NOT NULL constraint on net_payable
+ALTER TABLE public.teacher_payroll 
+ALTER COLUMN net_payable SET NOT NULL;

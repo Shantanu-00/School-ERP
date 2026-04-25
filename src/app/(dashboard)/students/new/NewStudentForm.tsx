@@ -95,14 +95,16 @@ export function NewStudentForm({
         {isExistingStudent && (
           <div className="mt-4 max-w-sm">
             <label className="block text-sm font-medium text-slate-700 mb-1">Opening Balance (Arrears) *</label>
-            <input 
-              type="number" 
-              name="opening_balance" 
-              value={openingBalance} 
+            <input
+              type="number"
+              name="opening_balance"
+              value={openingBalance === 0 ? '' : openingBalance}
               onChange={(e) => setOpeningBalance(parseFloat(e.target.value) || 0)}
-              step="0.01" 
+              onWheel={e => e.currentTarget.blur()}
+              step="0.01"
               min="0"
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm" 
+              placeholder="0.00"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
             <p className="text-xs text-slate-500 mt-1">Previous year pending dues</p>
           </div>
@@ -379,7 +381,8 @@ export function NewStudentForm({
               name="roll_number"
               required
               min="1"
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm"
+              onWheel={e => e.currentTarget.blur()}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               placeholder="e.g. 1"
             />
           </div>
@@ -433,8 +436,9 @@ export function NewStudentForm({
               max={discountMode === 'Percentage' ? 100 : undefined}
               value={discountValue}
               onChange={e => setDiscountValue(e.target.value)}
+              onWheel={e => e.currentTarget.blur()}
               disabled={discountType === 'None'}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm transition-colors disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed placeholder:disabled:text-slate-400"
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm transition-colors disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed placeholder:disabled:text-slate-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               placeholder="Value depending on mode"
             />
           </div>
@@ -452,8 +456,9 @@ export function NewStudentForm({
               name="pocket_money_initial_amount"
               step="0.01"
               min="0"
-              defaultValue={0}
-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm transition-colors"
+              defaultValue=""
+              onWheel={e => e.currentTarget.blur()}
+              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none text-slate-900 text-sm transition-colors [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               placeholder="e.g. 0.00"
             />
           </div>
