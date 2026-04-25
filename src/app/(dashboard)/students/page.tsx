@@ -23,13 +23,15 @@ export default async function StudentsPage({
   const feesStatus = resolvedParams?.feesStatus || 'All'
   const supabase = await createClient()
 
-  // Get correct CURRENT year: the most recently created active year
+  // Get the most recent active year (used as the single "current" year for UI status display)
   const { data: sysAcademicYears } = await supabase
     .from('academic_years')
-    .select('id, is_active')
-    .order('created_at', { ascending: false })
+    .select('id, is_active, start_date')
+    .order('start_date', { ascending: false })
   
-  const globalActiveYearId = sysAcademicYears?.find((y: any) => y.is_active)?.id
+  const activeAcademicYears = (sysAcademicYears || []).filter((y: any) => y.is_active)
+  const activeAcademicYearIds = new Set(activeAcademicYears.map((y: any) => y.id))
+  const globalActiveYearId = activeAcademicYears[0]?.id
   const { students, error } = await getStudents({ 
     query, 
     page: currentPage, 
@@ -74,6 +76,37 @@ export default async function StudentsPage({
         <h2 className="text-lg font-semibold">Please select an Academic Year from the Sidebar.</h2>
       </div>
     )
+  }
+
+  const latestEnrollmentYearByStudent = new Map<string, string>()
+  const studentsOnPageIds = (students || []).map((s: any) => s.id).filter(Boolean)
+
+  if (studentsOnPageIds.length > 0) {
+    const { data: allStudentEnrollments } = await supabase
+      .from('student_enrollments')
+      .select('student_id, academic_years(id, start_date)')
+      .in('student_id', studentsOnPageIds)
+
+    const latestEnrollmentTsByStudent = new Map<string, number>()
+
+    for (const enrollment of allStudentEnrollments || []) {
+      const studentId = enrollment.student_id as string | undefined
+      const yearData = Array.isArray((enrollment as any).academic_years)
+        ? (enrollment as any).academic_years[0]
+        : (enrollment as any).academic_years
+
+      const yearId = yearData?.id as string | undefined
+      if (!studentId || !yearId) continue
+
+      const parsedTs = yearData?.start_date ? Date.parse(yearData.start_date) : Number.NaN
+      const enrollmentTs = Number.isFinite(parsedTs) ? parsedTs : Number.NEGATIVE_INFINITY
+      const currentLatest = latestEnrollmentTsByStudent.get(studentId)
+
+      if (currentLatest === undefined || enrollmentTs > currentLatest) {
+        latestEnrollmentTsByStudent.set(studentId, enrollmentTs)
+        latestEnrollmentYearByStudent.set(studentId, yearId)
+      }
+    }
   }
 
   // Calculate stats for finance
@@ -219,20 +252,26 @@ export default async function StudentsPage({
                 const totalAction = student.absoluteTotalDues || 0;
                 const wallet = getPocketMoneyBal(student.pocket_money_transactions);
                 
-                const isLatestEnrollment = student.latestEnrollmentYearId === academicYear?.id;
+                const viewedYearId = academicYear?.id as string | undefined;
+                const latestEnrollmentYearId = latestEnrollmentYearByStudent.get(student.id);
+                const isLatestEnrollment = Boolean(viewedYearId && latestEnrollmentYearId === viewedYearId);
+                const isViewedYearActive = Boolean(viewedYearId && activeAcademicYearIds.has(viewedYearId));
+                const shouldShowAsCurrentActive =
+                  isViewedYearActive &&
+                  (activeAcademicYears.length === 1 || viewedYearId === globalActiveYearId);
+
                 let displayStatus = student.status || 'Active';
 
                 if (student.status === 'Active') {
-                    // They are only "Active" or "Active-Repeater" if this is the CURRENT year, AND it's their latest enrollment.
-                    if (academicYear?.id === globalActiveYearId && isLatestEnrollment) {
+                    if (shouldShowAsCurrentActive) {
                         displayStatus = student.isRepeater ? 'Active-Repeater' : 'Active';
                     } else {
                         displayStatus = 'Active-Old';
                     }
                 } else if (student.status === 'Dropout') {
-                    displayStatus = isLatestEnrollment ? 'Dropout' : 'Active-Dropout';
+                    displayStatus = !latestEnrollmentYearId || isLatestEnrollment ? 'Dropout' : 'Active-Dropout';
                 } else if (student.status === 'Alumni') {
-                    displayStatus = isLatestEnrollment ? 'Alumni' : 'Active-Alumni';
+                    displayStatus = !latestEnrollmentYearId || isLatestEnrollment ? 'Alumni' : 'Active-Alumni';
                 }
 
                 const getStatusBadge = (status: string) => {

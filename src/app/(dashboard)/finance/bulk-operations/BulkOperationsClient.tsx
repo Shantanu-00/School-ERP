@@ -25,6 +25,7 @@ type TabId = 'invoices' | 'pocket-money'
 type InvoiceMode = 'issue-new' | 'auto-pending'
 type PocketMode = 'flat' | 'per-student'
 type PocketType = 'DEBIT' | 'CREDIT'
+type PocketPaymentMode = 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' | 'Internal Adjustment'
 
 type FiltersState = {
   year_id: string
@@ -46,6 +47,8 @@ type PocketConfig = {
   mode: PocketMode
   flatAmount: string
   flatReason: string
+  paymentMode: PocketPaymentMode
+  transactionReference: string
   perAmounts: Record<string, string>
   perReasons: Record<string, string>
 }
@@ -440,6 +443,46 @@ function PocketPanel({
             ))}
           </div>
         </div>
+
+        <div>
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Payment Method</label>
+          <select
+            value={config.paymentMode}
+            onChange={e => {
+              const next = e.target.value as PocketPaymentMode
+              set({
+                paymentMode: next,
+                transactionReference: next === 'Cash' ? '' : config.transactionReference,
+              })
+            }}
+            className={selectCls}
+          >
+            <option value="Cash">Cash</option>
+            <option value="Bank Transfer">Bank Transfer</option>
+            <option value="UPI">UPI</option>
+            <option value="Cheque">Cheque</option>
+            <option value="Internal Adjustment">Internal Adjustment</option>
+          </select>
+        </div>
+
+        {config.paymentMode !== 'Cash' && (
+          <div>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+              Transaction Reference {config.type === 'CREDIT' ? '*' : '(Optional)'}
+            </label>
+            <input
+              value={config.transactionReference}
+              onChange={e => set({ transactionReference: e.target.value })}
+              placeholder="e.g. UTR123456789"
+              className={inputCls}
+            />
+            {config.type === 'CREDIT' && (
+              <p className="text-[10px] text-amber-700 font-semibold mt-1">
+                Required for non-cash credits.
+              </p>
+            )}
+          </div>
+        )}
 
         {config.mode === 'flat' && (
           <>
@@ -873,6 +916,8 @@ export function BulkOperationsClient({
     mode: 'flat',
     flatAmount: '',
     flatReason: '',
+    paymentMode: 'Cash',
+    transactionReference: '',
     perAmounts: {},
     perReasons: {},
   })
@@ -1042,8 +1087,19 @@ export function BulkOperationsClient({
     const flatAmt = Number(pocket.flatAmount)
     if (isFlat && flatAmt <= 0) { toast.error('Enter a valid amount.'); return }
     if (isFlat && !pocket.flatReason.trim()) { toast.error('Enter a reason.'); return }
+    if (pocket.type === 'CREDIT' && pocket.paymentMode !== 'Cash' && !pocket.transactionReference.trim()) {
+      toast.error('Transaction reference is required for non-cash credits.')
+      return
+    }
 
-    const items: { student_id: string; amount: number; description: string; type: 'CREDIT' | 'DEBIT' }[] = []
+    const items: {
+      student_id: string
+      amount: number
+      description: string
+      type: 'CREDIT' | 'DEBIT'
+      payment_mode: PocketPaymentMode
+      transaction_reference?: string
+    }[] = []
     const insufficient: string[] = []
 
     for (const s of selectedStudents) {
@@ -1054,7 +1110,14 @@ export function BulkOperationsClient({
       if (pocket.type === 'DEBIT' && s.pocket_money_balance < amt) {
         insufficient.push(`${s.first_name} ${s.last_name} (${fmt(s.pocket_money_balance)})`)
       }
-      items.push({ student_id: s.id, amount: amt, description: reason, type: pocket.type })
+      items.push({
+        student_id: s.id,
+        amount: amt,
+        description: reason,
+        type: pocket.type,
+        payment_mode: pocket.paymentMode,
+        transaction_reference: pocket.transactionReference.trim() || undefined,
+      })
     }
 
     if (!items.length) { toast.error('No valid amounts entered.'); return }
@@ -1065,13 +1128,21 @@ export function BulkOperationsClient({
     }
 
     startSubmitting(async () => {
-      const result = await bulkPocketMoneyAction(items)
-      if (result.error) { toast.error(result.error); return }
-      toast.success(`${result.successCount} transaction${result.successCount !== 1 ? 's' : ''} processed.`)
-      setSelectedIds(new Set())
-      setPocket(prev => ({ ...prev, flatAmount: '', flatReason: '', perAmounts: {}, perReasons: {} }))
-      loadStudents(filters)
-    })
+        const result = await bulkPocketMoneyAction(items)
+        if (result.error) { toast.error(result.error); return }
+        toast.success(`${result.successCount} transaction${result.successCount !== 1 ? 's' : ''} processed.`)
+        setSelectedIds(new Set())
+        setPocket(prev => ({
+          ...prev,
+          flatAmount: '',
+          flatReason: '',
+          paymentMode: 'Cash',
+          transactionReference: '',
+          perAmounts: {},
+          perReasons: {},
+        }))
+        loadStudents(filters)
+      })
   }
 
   const noYear = !filters.year_id

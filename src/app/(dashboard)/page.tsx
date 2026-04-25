@@ -11,6 +11,5 @@ export default async function DashboardHome() {
     redirect('/login')
   }
 
-  // 2. Redirect to the students page instead of showing the dashboard with hardcoded data
-  redirect('/students')
+  redirect('/dashboard')
 }

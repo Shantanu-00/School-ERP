@@ -252,6 +252,8 @@ export async function bulkPocketMoneyAction(
     amount: number
     description: string
     type: 'CREDIT' | 'DEBIT'
+    payment_mode: 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' | 'Internal Adjustment'
+    transaction_reference?: string
   }[]
 ) {
   if (!items.length) return { error: 'No items to process.', successCount: 0 }
@@ -260,11 +262,19 @@ export async function bulkPocketMoneyAction(
   const { staff, error: authError } = await getStaffFromUser(supabase)
   if (authError || !staff) return { error: authError, successCount: 0 }
 
+  for (const item of items) {
+    if (item.type === 'CREDIT' && item.payment_mode !== 'Cash' && !item.transaction_reference?.trim()) {
+      return { error: 'Transaction reference is required for non-cash pocket money credits.', successCount: 0 }
+    }
+  }
+
   const inserts = items.map(item => ({
     student_id: item.student_id,
     transaction_type: item.type,
     amount: item.amount,
     description: item.description,
+    payment_mode: item.payment_mode,
+    transaction_reference: item.transaction_reference?.trim() || null,
     logged_by: staff.id,
   }))
 

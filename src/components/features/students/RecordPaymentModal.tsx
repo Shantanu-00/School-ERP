@@ -6,6 +6,8 @@ import { Plus, X, Wallet, FileText, Loader2, Trash2 } from 'lucide-react'
 import { addPocketMoneyTransaction, getStudentPendingInvoices, recordFeePayments } from '@/actions/finance.actions'
 import { getUploadUrl } from '@/actions/storage.actions'
 
+type PocketPaymentMode = 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' | 'Internal Adjustment'
+
 function RecordPaymentModalContent({ studentId, variant = 'default' }: { studentId: string, variant?: 'default' | 'small' }) {
   const [isOpen, setIsOpen] = useState(false)
   const [mode, setMode] = useState<'select' | 'pocket' | 'fees'>('select')
@@ -22,6 +24,8 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
   const [loadingInvoices, setLoadingInvoices] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState('Cash')
   const [transactionReference, setTransactionReference] = useState('')
+  const [pocketPaymentMethod, setPocketPaymentMethod] = useState<PocketPaymentMode>('Cash')
+  const [pocketTransactionReference, setPocketTransactionReference] = useState('')
   
   const today = new Date().toISOString().split('T')[0]
   const thirtyDaysAgo = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0]
@@ -49,6 +53,10 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
       setErrorMsg('Please enter a valid amount')
       return
     }
+    if (pocketType === 'CREDIT' && pocketPaymentMethod !== 'Cash' && !pocketTransactionReference.trim()) {
+      setErrorMsg('Please provide a transaction reference for non-cash credits')
+      return
+    }
 
     setIsSubmitting(true)
     setErrorMsg('')
@@ -66,7 +74,15 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
       }
 
       const typedDescription = description || (pocketType === 'CREDIT' ? 'Parent Deposit' : 'Misc Expense')
-      const result = await addPocketMoneyTransaction(studentId, Number(amount), typedDescription, pocketType, fileKeys)
+      const result = await addPocketMoneyTransaction(
+        studentId,
+        Number(amount),
+        typedDescription,
+        pocketType,
+        fileKeys,
+        pocketPaymentMethod,
+        pocketTransactionReference.trim() || undefined
+      )
       
       if (result.error) {
         setErrorMsg(result.error)
@@ -171,6 +187,8 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
     setPaymentDate(today)
     setPaymentMethod('Cash')
     setTransactionReference('')
+    setPocketPaymentMethod('Cash')
+    setPocketTransactionReference('')
     setAllocations([{ id: crypto.randomUUID(), invoiceId: '', amount: '' }])
   }
 
@@ -521,6 +539,43 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                       placeholder={pocketType === 'CREDIT' ? 'Parent Deposit' : 'Canteen expense'}
                       required
                     />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Payment Method</label>
+                      <select
+                        className="w-full border-slate-200 rounded-md p-2.5 border outline-none shadow-sm"
+                        value={pocketPaymentMethod}
+                        onChange={(e) => {
+                          const next = e.target.value as PocketPaymentMode
+                          setPocketPaymentMethod(next)
+                          if (next === 'Cash') setPocketTransactionReference('')
+                        }}
+                      >
+                        <option value="Cash">Cash</option>
+                        <option value="Bank Transfer">Bank Transfer</option>
+                        <option value="UPI">UPI</option>
+                        <option value="Cheque">Cheque</option>
+                        <option value="Internal Adjustment">Internal Adjustment</option>
+                      </select>
+                    </div>
+
+                    {pocketPaymentMethod !== 'Cash' && (
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">
+                          Transaction Reference{pocketType === 'CREDIT' ? ' *' : ' (Optional)'}
+                        </label>
+                        <input
+                          type="text"
+                          value={pocketTransactionReference}
+                          onChange={(e) => setPocketTransactionReference(e.target.value)}
+                          placeholder="e.g. UTR123456789"
+                          className={`w-full border-slate-200 rounded-md p-2.5 border outline-none focus:ring-2 shadow-sm ${pocketType === 'CREDIT' ? 'focus:ring-emerald-500' : 'focus:ring-orange-500'}`}
+                          required={pocketType === 'CREDIT' && pocketPaymentMethod !== 'Cash'}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>

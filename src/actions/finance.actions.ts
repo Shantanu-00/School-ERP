@@ -50,7 +50,15 @@ export async function calculateFeeAction({
   }
 }
 
-export async function addPocketMoneyTransaction(student_id: string, amount: number, description: string, type: 'CREDIT' | 'DEBIT', receipt_object_keys?: string[]) {
+export async function addPocketMoneyTransaction(
+  student_id: string,
+  amount: number,
+  description: string,
+  type: 'CREDIT' | 'DEBIT',
+  receipt_object_keys?: string[],
+  payment_mode?: 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' | 'Internal Adjustment',
+  transaction_reference?: string
+) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: "Not logged in" }
@@ -58,12 +66,20 @@ export async function addPocketMoneyTransaction(student_id: string, amount: numb
   const { data: staff } = await supabase.from('staff').select('id').eq('auth_id', user.id).single()
   if (!staff) return { error: "Staff record not found" }
 
+  const normalizedMode = payment_mode || 'Cash'
+  const normalizedReference = (transaction_reference || '').trim()
+  if (type === 'CREDIT' && normalizedMode !== 'Cash' && !normalizedReference) {
+    return { error: 'Transaction reference is required for non-cash pocket money credits.' }
+  }
+
   const { error } = await supabase.from('pocket_money_transactions').insert({
     student_id,
     transaction_type: type,
     amount,
     description: description || `Pocket Money ${type === 'CREDIT' ? 'Deposit' : 'Withdrawal'}`,
     receipt_object_keys: receipt_object_keys || null,
+    payment_mode: normalizedMode,
+    transaction_reference: normalizedReference || null,
     logged_by: staff.id
   })
   

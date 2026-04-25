@@ -460,7 +460,54 @@ CREATE POLICY "Admins Accountants manage other income"
 ON public.other_income FOR ALL 
 USING (public.get_user_role() IN ('Admin', 'Accountant'));
  
+-- 1. Create a counter that starts at 1000
+CREATE SEQUENCE expense_voucher_seq START 1000;
 
+-- 2. Modify the table to automatically pull the next number and add "EXP-"
+ALTER TABLE public.general_expenses
+ALTER COLUMN voucher_number SET DEFAULT 'EXP-' || nextval('expense_voucher_seq'::regclass);
 
  
+ The Audit Logs tab reads from expense_audit_logs. The action writes to it gracefully (non-blocking if missing), but to make Tab 3 actually
+  work, run this in Supabase SQL editor:
 
+  CREATE TABLE public.expense_audit_logs (
+      id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+      expense_id UUID REFERENCES public.general_expenses(id) ON DELETE CASCADE,
+      academic_year_id UUID REFERENCES public.academic_years(id) ON DELETE RESTRICT,
+      voucher_number TEXT,
+      changed_by UUID REFERENCES public.staff(id),
+      changed_at TIMESTAMPTZ DEFAULT NOW(),
+      old_amount NUMERIC(10,2) NOT NULL,
+      new_amount NUMERIC(10,2) NOT NULL,
+      old_category TEXT NOT NULL,
+      new_category TEXT NOT NULL,
+      old_description TEXT,
+      new_description TEXT
+  );
+
+  ALTER TABLE public.expense_audit_logs ENABLE ROW LEVEL SECURITY;
+
+  CREATE POLICY "Admins Accountants read audit logs"
+  ON public.expense_audit_logs FOR SELECT
+  USING (public.get_user_role() IN ('Admin', 'Accountant'));
+
+  CREATE POLICY "System can insert audit logs"
+  ON public.expense_audit_logs FOR INSERT
+  WITH CHECK (public.get_user_role() IN ('Admin', 'Accountant'));
+
+ALTER TABLE public.pocket_money_transactions
+  -- Keep it to standard accounting modes. 'Adjustment' handles random internal fixes.
+  ADD COLUMN payment_mode TEXT CHECK (payment_mode IN (
+      'Cash', 
+      'Bank Transfer', 
+      'UPI', 
+      'Cheque', 
+      'Internal Adjustment'
+  )),
+  
+  -- UTR or Cheque Number
+  ADD COLUMN transaction_reference TEXT,
+  
+  -- Links to their physical receipt book or internal canteen chit
+  ADD COLUMN internal_voucher_number TEXT;
