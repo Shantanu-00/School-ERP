@@ -166,10 +166,10 @@ function Th({ children, className = '' }: { children: React.ReactNode; className
 function DateRangeInput({ from, to, onFrom, onTo }: { from: string; to: string; onFrom: (v: string) => void; onTo: (v: string) => void }) {
   return (<>
     <label className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600">
-      From <input type="date" value={from} onChange={e => onFrom(e.target.value)} className="bg-transparent border-none focus:outline-none text-slate-700 text-xs w-[110px]" />
+      From <input type="date" value={from} onChange={e => onFrom(e.target.value)} className="bg-transparent border-none focus:outline-none text-slate-700 text-xs w-27.5" />
     </label>
     <label className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-600">
-      To <input type="date" value={to} onChange={e => onTo(e.target.value)} className="bg-transparent border-none focus:outline-none text-slate-700 text-xs w-[110px]" />
+      To <input type="date" value={to} onChange={e => onTo(e.target.value)} className="bg-transparent border-none focus:outline-none text-slate-700 text-xs w-27.5" />
     </label>
   </>)
 }
@@ -298,7 +298,7 @@ function ExpensesTab({ ex, academicYear }: { ex: NonNullable<ExpenseData>; acade
               <tr key={e.id} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors">
                 <td className="p-3 pl-5 text-xs text-slate-600 whitespace-nowrap">{fmtDate(e.date)}</td>
                 <td className="p-3 text-sm font-medium text-slate-800">{e.category}</td>
-                <td className="p-3 text-xs text-slate-600 max-w-[120px] truncate" title={e.payee}>{e.payee || '—'}</td>
+                <td className="p-3 text-xs text-slate-600 max-w-30 truncate" title={e.payee}>{e.payee || '—'}</td>
                 <td className="p-3 text-xs text-slate-500">{e.costCenter}</td>
                 <td className="p-3 text-right font-bold text-red-600">{INR(e.amount)}</td>
                 <td className="p-3 text-xs text-slate-500">{e.mode || '—'}</td>
@@ -339,7 +339,7 @@ function ExpensesTab({ ex, academicYear }: { ex: NonNullable<ExpenseData>; acade
                 <td className="p-3 pl-5 text-xs text-slate-600 whitespace-nowrap">{fmtDate(i.date)}</td>
                 <td className="p-3 text-sm font-medium text-slate-800">{i.category}</td>
                 <td className="p-3 text-right font-bold text-violet-700">{INR(i.amount)}</td>
-                <td className="p-3 text-xs text-slate-600 max-w-[200px] truncate" title={i.description}>{i.description || '—'}</td>
+                <td className="p-3 text-xs text-slate-600 max-w-50 truncate" title={i.description}>{i.description || '—'}</td>
                 <td className="p-3 pr-5 text-xs text-slate-500">{i.loggedBy || '—'}</td>
               </tr>
             ))}
@@ -485,7 +485,7 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
     : 0
 
   return (
-    <div className="flex flex-col gap-6 p-4 sm:p-6 pb-16 max-w-[1400px]">
+    <div className="flex flex-col gap-6 p-4 sm:p-6 pb-16 max-w-350">
 
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -676,7 +676,7 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
           {/* ── Money In / Money Out ─────────────────────────────── */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Money Received */}
-            <div className="bg-gradient-to-br from-green-50 to-white rounded-xl border border-green-200 p-5 shadow-sm">
+            <div className="bg-linear-to-br from-green-50 to-white rounded-xl border border-green-200 p-5 shadow-sm">
               <div className="flex items-center gap-3 mb-5">
                 <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center"><ArrowDownLeft size={20} className="text-green-600" /></div>
                 <div className="flex-1"><h4 className="text-[15px] font-bold text-slate-900">Money Received</h4>
@@ -709,7 +709,7 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
             </div>
 
             {/* Money Spent */}
-            <div className="bg-gradient-to-br from-red-50 to-white rounded-xl border border-red-200 p-5 shadow-sm">
+            <div className="bg-linear-to-br from-red-50 to-white rounded-xl border border-red-200 p-5 shadow-sm">
               <div className="flex items-center gap-3 mb-5">
                 <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center"><ArrowUpRightIcon size={20} className="text-red-500" /></div>
                 <div className="flex-1"><h4 className="text-[15px] font-bold text-slate-900">Money Spent</h4>
@@ -805,7 +805,7 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
                           {t.source}
                         </span>
                       </td>
-                      <td className="p-3 text-xs text-slate-700 max-w-[250px] truncate" title={t.description}>{t.description}</td>
+                      <td className="p-3 text-xs text-slate-700 max-w-62.5 truncate" title={t.description}>{t.description}</td>
                       <td className={`p-3 text-right font-bold ${
                         t.direction === 'in' ? 'text-green-600' : t.direction === 'pending' ? 'text-amber-600' : 'text-red-500'
                       }`}>
@@ -873,7 +873,7 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
 
           <Section title="Fee Payment Logs" action={<div className="flex items-center gap-2 flex-wrap"><RowsPicker value={flRows} onChange={v => { setFlRows(v); loadFl(flFrom, flTo, v) }} /><DateRangeInput from={flFrom} to={flTo} onFrom={setFlFrom} onTo={setFlTo} /><Btn onClick={() => loadFl(flFrom, flTo, flRows)} disabled={flBusy} loading={flBusy}><Search size={12} /> Apply</Btn>{fl.length > 0 && <Btn onClick={csvFl} variant="ghost"><Download size={12} /> CSV</Btn>}</div>}>
             <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-sm"><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-slate-50/80 border-b border-slate-100"><Th className="pl-5 text-left">Date</Th><Th className="text-left">Student</Th><Th className="text-left">Class</Th><Th className="text-left">Invoice</Th><Th className="text-right">Amount</Th><Th className="text-left">Method</Th><Th className="text-left">Ref</Th><Th className="pr-5 text-left">By</Th></tr></thead><tbody>
-              {fl.length === 0 ? <tr><td colSpan={8} className="p-10 text-center text-slate-400">No payments for selected range</td></tr> : fl.map(l => <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors"><td className="p-3 pl-5 text-xs text-slate-600 whitespace-nowrap">{fmtDate(l.date)}</td><td className="p-3"><span className="font-medium text-slate-800 text-sm">{l.studentName}</span>{l.admissionNumber && <span className="block text-[10px] text-slate-400">#{l.admissionNumber}</span>}</td><td className="p-3 text-xs text-slate-600">{l.className}</td><td className="p-3 text-xs text-slate-600 max-w-[150px] truncate" title={l.invoiceTitle}>{l.invoiceTitle}</td><td className="p-3 text-right font-bold text-emerald-600">{INR(l.amount)}</td><td className="p-3 text-xs text-slate-500">{l.method || '—'}</td><td className="p-3 text-xs text-slate-500 max-w-[90px] truncate">{l.reference || '—'}</td><td className="p-3 pr-5 text-xs text-slate-500">{l.loggedBy || '—'}</td></tr>)}
+              {fl.length === 0 ? <tr><td colSpan={8} className="p-10 text-center text-slate-400">No payments for selected range</td></tr> : fl.map(l => <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors"><td className="p-3 pl-5 text-xs text-slate-600 whitespace-nowrap">{fmtDate(l.date)}</td><td className="p-3"><span className="font-medium text-slate-800 text-sm">{l.studentName}</span>{l.admissionNumber && <span className="block text-[10px] text-slate-400">#{l.admissionNumber}</span>}</td><td className="p-3 text-xs text-slate-600">{l.className}</td><td className="p-3 text-xs text-slate-600 max-w-37.5 truncate" title={l.invoiceTitle}>{l.invoiceTitle}</td><td className="p-3 text-right font-bold text-emerald-600">{INR(l.amount)}</td><td className="p-3 text-xs text-slate-500">{l.method || '—'}</td><td className="p-3 text-xs text-slate-500 max-w-22.5 truncate">{l.reference || '—'}</td><td className="p-3 pr-5 text-xs text-slate-500">{l.loggedBy || '—'}</td></tr>)}
             </tbody></table></div>
             {flMore && <div className="p-3 border-t border-slate-100 text-center"><button onClick={() => loadFl(flFrom, flTo, flRows, true)} disabled={flBusy} className="text-xs font-medium text-blue-600 hover:text-blue-700">{flBusy ? 'Loading...' : 'Load More'}</button></div>}
             {fl.length > 0 && !flMore && <div className="py-2 text-center text-[11px] text-slate-400 border-t border-slate-50">{fl.length} payment{fl.length !== 1 ? 's' : ''}</div>}
@@ -908,7 +908,7 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
           {d.pocketMoney.topDefaulters.length > 0 && <Section title="Top Negative Balances"><div className="bg-white rounded-xl border border-slate-200/80 divide-y divide-slate-50 shadow-sm">{d.pocketMoney.topDefaulters.map((x, i) => <Link key={x.id} href={`/students/${x.id}/pocket-money`} className="flex items-center justify-between px-5 py-3 hover:bg-slate-50/60 transition-colors"><div className="flex items-center gap-3"><span className="w-6 h-6 rounded-full bg-red-50 text-red-600 text-[10px] font-bold flex items-center justify-center border border-red-100">{i + 1}</span><span className="text-sm font-medium text-slate-800">{x.name}</span></div><span className="text-sm font-bold text-red-600">{INR(Math.abs(x.balance))}</span></Link>)}</div></Section>}
           <Section title="Transaction Logs" action={<div className="flex items-center gap-2 flex-wrap"><RowsPicker value={plRows} onChange={v => { setPlRows(v); loadPl(plFrom, plTo, v) }} /><DateRangeInput from={plFrom} to={plTo} onFrom={setPlFrom} onTo={setPlTo} /><Btn onClick={() => loadPl(plFrom, plTo, plRows)} disabled={plBusy} loading={plBusy}><Search size={12} /> Apply</Btn>{pl.length > 0 && <Btn onClick={csvPl} variant="ghost"><Download size={12} /> CSV</Btn>}</div>}>
             <div className="bg-white rounded-xl border border-slate-200/80 overflow-hidden shadow-sm"><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="bg-slate-50/80 border-b border-slate-100"><Th className="pl-5 text-left">Date</Th><Th className="text-left">Student</Th><Th className="text-left">Type</Th><Th className="text-right">Amount</Th><Th className="text-left">Description</Th><Th className="text-left">Method</Th><Th className="pr-5 text-left">By</Th></tr></thead><tbody>
-              {pl.length === 0 ? <tr><td colSpan={7} className="p-10 text-center text-slate-400">No transactions for selected range</td></tr> : pl.map(l => <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors"><td className="p-3 pl-5 text-xs text-slate-600 whitespace-nowrap">{fmtDate(l.date)}</td><td className="p-3"><span className="font-medium text-slate-800 text-sm">{l.studentName}</span>{l.admissionNumber && <span className="block text-[10px] text-slate-400">#{l.admissionNumber}</span>}</td><td className="p-3"><span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${l.type === 'CREDIT' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-red-50 text-red-600 border-red-100'}`}>{l.type}</span></td><td className={`p-3 text-right font-bold ${l.type === 'CREDIT' ? 'text-blue-600' : 'text-red-600'}`}>{l.type === 'CREDIT' ? '+' : '-'}{INR(l.amount)}</td><td className="p-3 text-xs text-slate-600 max-w-[160px] truncate" title={l.description}>{l.description}</td><td className="p-3 text-xs text-slate-500">{l.method || '—'}</td><td className="p-3 pr-5 text-xs text-slate-500">{l.loggedBy || '—'}</td></tr>)}
+              {pl.length === 0 ? <tr><td colSpan={7} className="p-10 text-center text-slate-400">No transactions for selected range</td></tr> : pl.map(l => <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50/40 transition-colors"><td className="p-3 pl-5 text-xs text-slate-600 whitespace-nowrap">{fmtDate(l.date)}</td><td className="p-3"><span className="font-medium text-slate-800 text-sm">{l.studentName}</span>{l.admissionNumber && <span className="block text-[10px] text-slate-400">#{l.admissionNumber}</span>}</td><td className="p-3"><span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${l.type === 'CREDIT' ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-red-50 text-red-600 border-red-100'}`}>{l.type}</span></td><td className={`p-3 text-right font-bold ${l.type === 'CREDIT' ? 'text-blue-600' : 'text-red-600'}`}>{l.type === 'CREDIT' ? '+' : '-'}{INR(l.amount)}</td><td className="p-3 text-xs text-slate-600 max-w-40 truncate" title={l.description}>{l.description}</td><td className="p-3 text-xs text-slate-500">{l.method || '—'}</td><td className="p-3 pr-5 text-xs text-slate-500">{l.loggedBy || '—'}</td></tr>)}
             </tbody></table></div>
             {plMore && <div className="p-3 border-t border-slate-100 text-center"><button onClick={() => loadPl(plFrom, plTo, plRows, true)} disabled={plBusy} className="text-xs font-medium text-blue-600 hover:text-blue-700">{plBusy ? 'Loading...' : 'Load More'}</button></div>}
             {pl.length > 0 && !plMore && <div className="py-2 text-center text-[11px] text-slate-400 border-t border-slate-50">{pl.length} transaction{pl.length !== 1 ? 's' : ''}</div>}

@@ -324,7 +324,7 @@ function InvoicePanel({
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Title</p>
-                    <p className="text-xs font-bold text-slate-800 mt-0.5 break-words">
+                    <p className="text-xs font-bold text-slate-800 mt-0.5 wrap-break-words">
                       {isNew ? (previewNewTitle || '—') : (previewAutoTitle || '—')}
                     </p>
                     {!isNew && withConfig.length > 1 && (
@@ -561,7 +561,7 @@ function DiscountCell({
   }
 
   return (
-    <div className="flex flex-col gap-1.5 min-w-[180px]" onClick={e => e.stopPropagation()}>
+    <div className="flex flex-col gap-1.5 min-w-45" onClick={e => e.stopPropagation()}>
       <select value={current.discount_type}
         onChange={e => onChange({ ...current, discount_type: e.target.value, discount_value: e.target.value === 'None' ? '0' : current.discount_value })}
         className="h-7 px-2 text-xs border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
@@ -614,7 +614,7 @@ function InvoiceTable({
   const isNew = template.mode === 'issue-new'
 
   return (
-    <table className="w-full text-sm text-left border-collapse min-w-[760px]">
+    <table className="w-full text-sm text-left border-collapse min-w-190">
       <thead>
         <tr className="bg-slate-50 border-b text-[10px] font-bold text-slate-400 uppercase tracking-wider">
           <th className="p-3 w-9" />
@@ -732,7 +732,7 @@ function InvoiceTable({
                       <div className="flex flex-col items-end gap-0.5">
                         <span className="text-blue-700 font-black text-[13px]">{fmt(invoiceAmt)}</span>
                         {!isNew && (
-                          <span className="text-[9px] text-slate-400 truncate max-w-[140px]" title={invoiceTitle}>{invoiceTitle}</span>
+                          <span className="text-[9px] text-slate-400 truncate max-w-" title={invoiceTitle}>{invoiceTitle}</span>
                         )}
                       </div>
                     )
@@ -774,7 +774,7 @@ function PocketTable({
   const flatAmt = Number(config.flatAmount) || 0
 
   return (
-    <table className="w-full text-sm text-left border-collapse min-w-[640px]">
+    <table className="w-full text-sm text-left border-collapse min-w-160">
       <thead>
         <tr className="bg-slate-50 border-b text-[10px] font-bold text-slate-400 uppercase tracking-wider">
           <th className="p-3 w-9" />
@@ -1192,7 +1192,7 @@ export function BulkOperationsClient({
               <span className="text-xs text-amber-600 font-semibold px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">No active years. Contact Admin.</span>
             ) : (
               <select value={filters.year_id} onChange={e => handleFilterChange({ year_id: e.target.value })}
-                disabled={isLoadingStudents} className={`${selectCls} font-semibold min-w-[150px]`}>
+                disabled={isLoadingStudents} className={`${selectCls} font-semibold min-w-37.5`}>
                 <option value="">Select Year…</option>
                 {academicYears.map(y => (
                   <option key={y.id} value={y.id}>{y.name}{y.is_active ? ' ✓' : ''}</option>

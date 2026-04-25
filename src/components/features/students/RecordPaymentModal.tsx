@@ -575,7 +575,7 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                           onChange={(e) => setPocketTransactionReference(e.target.value)}
                           placeholder="e.g. UTR123456789"
                           className={`w-full border-slate-200 rounded-md p-2.5 border outline-none focus:ring-2 shadow-sm ${pocketType === 'CREDIT' ? 'focus:ring-emerald-500' : 'focus:ring-orange-500'}`}
-                          required={pocketType === 'CREDIT' && pocketPaymentMethod !== 'Cash'}
+                          required={pocketType === 'CREDIT'}
                         />
                       </div>
                     )}

@@ -67,7 +67,7 @@ export default async function StaffProfilePage({
       {/* Profile Card */}
       <div className="bg-white rounded-2xl border shadow-sm overflow-hidden">
         {/* Header band */}
-        <div className="bg-gradient-to-r from-blue-600 to-blue-500 px-6 py-8 flex items-center gap-5">
+        <div className="bg-linear-to-r from-blue-600 to-blue-500 px-6 py-8 flex items-center gap-5">
           <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-2xl shrink-0">
             {teacher.first_name[0]}{teacher.last_name[0]}
           </div>
@@ -200,7 +200,7 @@ export default async function StaffProfilePage({
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{rec.payment_mode || '—'}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs font-mono">{rec.transaction_reference || '—'}</td>
-                    <td className="px-4 py-3 text-slate-500 text-xs max-w-[160px] truncate">{rec.remarks || '—'}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs max-w-40 truncate">{rec.remarks || '—'}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold uppercase tracking-wider ${statusBadge(rec.status)}`}>
                         {rec.status || 'Draft'}

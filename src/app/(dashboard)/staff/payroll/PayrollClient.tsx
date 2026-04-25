@@ -995,7 +995,7 @@ function PayrollTab({
                             <input type="text" value={row.remarks}
                               onChange={e => updateRow(row.localId, { remarks: e.target.value })}
                               placeholder="Optional notes"
-                              className="w-full min-w-[120px] border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
+                              className="w-full min-w-30 border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
                           )}
                         </td>
                         <td className="px-4 py-3">

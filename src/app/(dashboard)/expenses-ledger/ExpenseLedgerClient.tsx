@@ -245,7 +245,7 @@ function ExpenseDrawer({ open, onClose, onSaved, academicYearId, editing }: {
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-[420px] bg-white shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-250">
+      <div className="relative w-full max-w-105 bg-white shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-250">
 
         {/* Drawer Header */}
         <div className={`px-5 py-4 border-b shrink-0 ${isEdit ? 'bg-amber-50' : 'bg-blue-50'}`}>
@@ -402,7 +402,8 @@ function IncomeDrawer({ open, onClose, onSaved, academicYearId }: {
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-[420px] bg-white shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-250">
+      <div className="relative w-full max-w-105
+       bg-white shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-250">
         <div className="px-5 py-4 border-b bg-emerald-50 shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -655,13 +656,13 @@ function ExpensesTab({ expenses, onAdd, onEdit }: {
                     <td className="px-4 py-3">
                       <div className="text-xs text-slate-600">{row.payment_mode ?? '—'}</div>
                       {row.transaction_reference && (
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate max-w-[80px]">{row.transaction_reference}</div>
+                        <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate max-w-20">{row.transaction_reference}</div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <span className="text-sm font-bold text-slate-800">{fmtINR(Number(row.amount))}</span>
                       {row.description && (
-                        <div className="text-[10px] text-slate-400 mt-0.5 max-w-[100px] truncate text-right">{row.description}</div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 max-w-25 truncate text-right">{row.description}</div>
                       )}
                     </td>
                     <td className="px-4 py-3 text-center">
