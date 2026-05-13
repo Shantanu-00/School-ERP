@@ -79,7 +79,7 @@ export default async function FeeConfigsPage({
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Base Fee Amount (₹)</label>
-              <input type="number" step="0.01" name="base_fee_amount" required min="0" onWheel={e => e.currentTarget.blur()} className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none transition text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" placeholder="e.g. 50000" />
+              <input type="number" step="0.01" name="base_fee_amount" required min="0" className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-600 outline-none transition text-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" placeholder="e.g. 50000" />
             </div>
             <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 text-sm font-medium w-full hover:bg-blue-700 transition mt-4">
               <Plus size={16} /> Save Fee Strategy
