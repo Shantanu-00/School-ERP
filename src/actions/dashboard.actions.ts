@@ -466,7 +466,7 @@ export async function getDashboardExpenseData(academicYearId: string) {
   // Flatten to per-bill totals
   const allExp = allBills.map((b: any) => {
     const itemSum = (b.expense_bill_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0)
-    const modes: string[] = [...new Set((b.expense_payments || []).map((p: any) => p.payment_mode).filter(Boolean))]
+    const modes: string[] = [...new Set<string>((b.expense_payments || []).map((p: any) => p.payment_mode as string).filter(Boolean))]
     return {
       id: b.id,
       category: b.category,
