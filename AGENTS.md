@@ -739,3 +739,53 @@ LEFT JOIN (
     WHERE type = 'INTEREST_PAYMENT'
     GROUP BY loan_id
 ) i ON l.id = i.loan_id;
+
+
+-- 1. UPDATE EXPENSE MODULE
+-- Attach bank name to the individual installments paid out to vendors/constructors
+ALTER TABLE public.expense_payments
+ADD COLUMN bank_name TEXT;
+
+
+-- 2. UPDATE OTHER INCOME MODULE
+-- Attach bank name to the incoming receipts (scrap sales, donations, rentals, etc.)
+ALTER TABLE public.other_income
+ADD COLUMN bank_name TEXT;
+
+
+-- 3. UPDATE LOANS MODULE
+-- Attach bank name to the individual disbursements, principal repayments, or interest payments
+ALTER TABLE public.loan_transactions
+ADD COLUMN bank_name TEXT;
+
+-- Step 1: Drop the old, polluted category check constraint
+-- Note: Postgres automatically names this table_column_check if not explicitly specified
+ALTER TABLE public.other_income 
+DROP CONSTRAINT IF EXISTS other_income_income_category_check;
+
+-- Step 2: Add the updated, clean check constraint
+-- This strictly enforces TRUE non-fee income, completely separating loans!
+ALTER TABLE public.other_income
+ADD CONSTRAINT other_income_income_category_check 
+CHECK (income_category IN (
+    'Rental Income',        -- e.g., Renting the auditorium or football ground
+    'Bank Interest',        -- e.g., FD interest accrued in the school bank account
+    'Scrap/Asset Sale',     -- e.g., Selling old news papers, broken furniture, deprecated buses
+    'Donation',             -- e.g., Alumni funds or corporate CSR gifts with no return obligation
+    'Other'                 -- Catch-all for random non-fee income
+));
+
+-- Upgrade other_income to track audit trails and transaction details
+ALTER TABLE public.other_income
+  -- 1. How was it paid? (Cash, UPI, Cheque, Bank Transfer)
+  ADD COLUMN payment_mode TEXT CHECK (payment_mode IN ('Cash', 'Bank Transfer', 'UPI', 'Cheque')),
+  
+  -- 2. What is the tracking number? (Bank UTR number, IMPS transaction ID, Cheque No)
+  ADD COLUMN transaction_reference TEXT,
+  
+  -- 3. Digital proof attachment (Array for storing Cloudflare R2 / Storage keys for receipt scans)
+  ADD COLUMN receipt_object_keys TEXT[],
+  
+  -- 4. Audit Tracking for edits
+  ADD COLUMN updated_by UUID REFERENCES public.staff(id),
+  ADD COLUMN updated_at TIMESTAMPTZ;

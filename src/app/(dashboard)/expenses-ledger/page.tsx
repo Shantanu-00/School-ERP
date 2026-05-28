@@ -5,6 +5,7 @@ import {
   getExpenseBills,
   getOtherIncome,
   getExpenseLedgerSummary,
+  getLoans,
 } from '@/actions/expenses.actions'
 import { ExpenseLedgerClient } from './ExpenseLedgerClient'
 
@@ -47,10 +48,12 @@ export default async function ExpenseLedgerPage() {
   const [
     { data: bills },
     { data: otherIncome },
+    { data: loans },
     summary,
   ] = await Promise.all([
     getExpenseBills(resolvedYearId),
     getOtherIncome(resolvedYearId),
+    getLoans(resolvedYearId),
     getExpenseLedgerSummary(resolvedYearId),
   ])
 
@@ -60,6 +63,7 @@ export default async function ExpenseLedgerPage() {
     <ExpenseLedgerClient
       bills={bills ?? []}
       otherIncome={otherIncome ?? []}
+      loans={loans ?? []}
       totalExpenses={summary.totalExpenses}
       totalCapital={summary.totalCapital}
       academicYearId={resolvedYearId}

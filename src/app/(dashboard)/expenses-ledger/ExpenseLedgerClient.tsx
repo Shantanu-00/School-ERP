@@ -6,11 +6,13 @@ import {
   Plus, Download, X, Loader2, TrendingDown, TrendingUp,
   ChevronDown, ChevronRight, FileText, Eye, Paperclip,
   IndianRupee, Trash2, AlertCircle, Receipt, Filter,
+  ArrowDownLeft, ArrowUpRight, Landmark,
 } from 'lucide-react'
 import {
   createExpenseBill, recordBillPayment, addBillItem, recordOtherIncome,
-  getExpenseBills, getOtherIncome,
+  getExpenseBills, getOtherIncome, getLoans, createLoan, addLoanTransaction,
   type ExpenseBillSummaryRow, type OtherIncomeRow,
+  type InternalLoanRow, type LoanTransactionRow,
 } from '@/actions/expenses.actions'
 import { getUploadUrl, getViewUrls } from '@/actions/storage.actions'
 
@@ -25,7 +27,7 @@ const CATEGORIES = [
 const COST_CENTERS = ['Main School', 'Hostel', 'Mess', 'Transport']
 const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'UPI', 'Cheque']
 const INCOME_CATEGORIES = [
-  'Borrowed Capital / Loan', 'Owner Deposit', 'Donation', 'Scrap/Asset Sale', 'Other',
+  'Rental Income', 'Bank Interest', 'Scrap/Asset Sale', 'Donation', 'Other',
 ]
 
 const STATUS_STYLES: Record<string, { dot: string; badge: string }> = {
@@ -42,12 +44,32 @@ const CC_DOT: Record<string, string> = {
   'Transport':   'bg-teal-500',
 }
 
+const LOAN_PAYMENT_MODES = ['Cash', 'Bank Transfer', 'UPI', 'Cheque', 'Internal Adjustment']
+
+const LOAN_STATUS_STYLES: Record<string, { dot: string; badge: string }> = {
+  Active:   { dot: 'bg-blue-500',    badge: 'bg-blue-50 text-blue-700 border-blue-200' },
+  Settled:  { dot: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  Defaulted:{ dot: 'bg-rose-500',    badge: 'bg-rose-50 text-rose-700 border-rose-200' },
+}
+
+const TXN_TYPE_LABELS: Record<string, string> = {
+  INITIAL_DISBURSEMENT: 'Disbursement',
+  PRINCIPAL_REPAYMENT: 'Principal Repayment',
+  INTEREST_PAYMENT: 'Interest Payment',
+}
+
+const TXN_TYPE_COLORS: Record<string, string> = {
+  INITIAL_DISBURSEMENT: 'bg-blue-50 text-blue-700 border-blue-200',
+  PRINCIPAL_REPAYMENT:  'bg-emerald-50 text-emerald-700 border-emerald-200',
+  INTEREST_PAYMENT:     'bg-amber-50 text-amber-700 border-amber-200',
+}
+
 const INCOME_CAT_COLORS: Record<string, string> = {
-  'Borrowed Capital / Loan': 'bg-rose-50 text-rose-700 border-rose-100',
-  'Owner Deposit':            'bg-emerald-50 text-emerald-700 border-emerald-100',
-  'Donation':                 'bg-purple-50 text-purple-700 border-purple-100',
-  'Scrap/Asset Sale':         'bg-amber-50 text-amber-700 border-amber-100',
-  'Other':                    'bg-slate-100 text-slate-600 border-slate-200',
+  'Rental Income':    'bg-blue-50 text-blue-700 border-blue-100',
+  'Bank Interest':    'bg-emerald-50 text-emerald-700 border-emerald-100',
+  'Scrap/Asset Sale': 'bg-amber-50 text-amber-700 border-amber-100',
+  'Donation':         'bg-purple-50 text-purple-700 border-purple-100',
+  'Other':            'bg-slate-100 text-slate-600 border-slate-200',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -66,6 +88,10 @@ function today() { return new Date().toISOString().split('T')[0] }
 function csvEscape(v: unknown): string {
   const s = String(v ?? '')
   return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+function needsBankName(mode: string) {
+  return mode !== 'Cash' && mode !== 'Internal Adjustment'
 }
 
 function downloadCsv(filename: string, headers: string[], rows: (string | number | null | undefined)[][]) {
@@ -439,11 +465,12 @@ function RecordPaymentDrawer({ open, onClose, onSaved, bill }: {
   const [date, setDate] = useState(today())
   const [paymentMode, setPaymentMode] = useState('Cash')
   const [txnRef, setTxnRef] = useState('')
+  const [bankName, setBankName] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  useEffect(() => { if (open) { setAmount(''); setDate(today()); setPaymentMode('Cash'); setTxnRef(''); setFiles([]); setErr('') } }, [open])
+  useEffect(() => { if (open) { setAmount(''); setDate(today()); setPaymentMode('Cash'); setTxnRef(''); setBankName(''); setFiles([]); setErr('') } }, [open])
 
   const handleSubmit = async () => {
     if (!bill) return
@@ -453,6 +480,9 @@ function RecordPaymentDrawer({ open, onClose, onSaved, bill }: {
     if (amt > bill.balance_due + 0.001) {
       setErr(`Payment cannot exceed the balance due of ${fmtINR(bill.balance_due)}.`)
       setSaving(false); return
+    }
+    if (needsBankName(paymentMode) && !bankName.trim()) {
+      setErr('Bank name is required for non-cash payments.'); setSaving(false); return
     }
 
     let receiptKeys: string[] = []
@@ -473,6 +503,7 @@ function RecordPaymentDrawer({ open, onClose, onSaved, bill }: {
       payment_date: date,
       payment_mode: paymentMode,
       transaction_reference: txnRef || undefined,
+      bank_name: needsBankName(paymentMode) ? bankName.trim() : undefined,
       receipt_object_keys: receiptKeys.length ? receiptKeys : undefined,
     })
     setSaving(false)
@@ -528,12 +559,14 @@ function RecordPaymentDrawer({ open, onClose, onSaved, bill }: {
 
           <Field label="Payment Date" name="date" type="date" required value={date} onChange={setDate} maxDate={today()} />
 
-          <div className="grid grid-cols-2 gap-3">
-            <SelectField label="Payment Mode" name="mode" required value={paymentMode} onChange={setPaymentMode} options={PAYMENT_MODES} />
-            {paymentMode !== 'Cash' && (
+          <SelectField label="Payment Mode" name="mode" required value={paymentMode} onChange={v => { setPaymentMode(v); if (v === 'Cash') { setBankName(''); setTxnRef('') } }} options={PAYMENT_MODES} />
+
+          {needsBankName(paymentMode) && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Bank Name" name="bank" required value={bankName} onChange={setBankName} placeholder="e.g. HDFC Bank" />
               <Field label="Ref / UTR / Cheque" name="ref" value={txnRef} onChange={setTxnRef} placeholder="e.g. UTR123" />
-            )}
-          </div>
+            </div>
+          )}
 
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -557,6 +590,14 @@ function RecordPaymentDrawer({ open, onClose, onSaved, bill }: {
 
 // ─── Income Drawer ─────────────────────────────────────────────────────────────
 
+const INCOME_CATEGORY_HINTS: Record<string, string> = {
+  'Rental Income':   'e.g. Auditorium rental, ground hiring',
+  'Bank Interest':   'e.g. FD interest from school bank account',
+  'Scrap/Asset Sale':'e.g. Old furniture, newspapers, deprecated equipment',
+  'Donation':        'e.g. Alumni fund, corporate CSR grant',
+  'Other':           'Any other non-fee income not listed above',
+}
+
 function IncomeDrawer({ open, onClose, onSaved, academicYearId }: {
   open: boolean; onClose: () => void; onSaved: () => void; academicYearId: string
 }) {
@@ -564,20 +605,55 @@ function IncomeDrawer({ open, onClose, onSaved, academicYearId }: {
   const [category, setCategory] = useState('')
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
+  const [paymentMode, setPaymentMode] = useState('Cash')
+  const [bankName, setBankName] = useState('')
+  const [txnRef, setTxnRef] = useState('')
+  const [files, setFiles] = useState<File[]>([])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  useEffect(() => { if (open) { setDate(today()); setCategory(''); setAmount(''); setDescription(''); setErr('') } }, [open])
+  useEffect(() => {
+    if (open) {
+      setDate(today()); setCategory(''); setAmount(''); setDescription('')
+      setPaymentMode('Cash'); setBankName(''); setTxnRef(''); setFiles([]); setErr('')
+    }
+  }, [open])
 
   const handleSubmit = async () => {
     setSaving(true); setErr('')
     const amt = parseFloat(amount)
+    if (!category) { setErr('Please select an income category.'); setSaving(false); return }
     if (isNaN(amt) || amt <= 0) { setErr('Amount must be positive.'); setSaving(false); return }
-    if (!category) { setErr('Please select an income source.'); setSaving(false); return }
-    const result = await recordOtherIncome({ academic_year_id: academicYearId, income_category: category, amount: amt, date_received: date, description: description || undefined })
+    if (needsBankName(paymentMode) && !bankName.trim()) {
+      setErr('Bank name is required for non-cash receipts.'); setSaving(false); return
+    }
+
+    let receiptKeys: string[] = []
+    if (files.length > 0) {
+      try {
+        receiptKeys = await Promise.all(files.map(async file => {
+          const { signedUrl, fileKey } = await getUploadUrl(file.type || 'application/octet-stream')
+          const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+          if (!res.ok) throw new Error('Upload failed')
+          return fileKey
+        }))
+      } catch { setErr('Receipt upload failed. Please try again.'); setSaving(false); return }
+    }
+
+    const result = await recordOtherIncome({
+      academic_year_id: academicYearId,
+      income_category: category,
+      amount: amt,
+      date_received: date,
+      description: description || undefined,
+      payment_mode: paymentMode,
+      bank_name: needsBankName(paymentMode) ? bankName.trim() : undefined,
+      transaction_reference: txnRef.trim() || undefined,
+      receipt_object_keys: receiptKeys.length ? receiptKeys : undefined,
+    })
     setSaving(false)
     if (result.error) { setErr(result.error); return }
-    toast.success('Capital entry recorded.'); onSaved(); onClose()
+    toast.success('Income entry recorded.'); onSaved(); onClose()
   }
 
   if (!open) return null
@@ -588,33 +664,75 @@ function IncomeDrawer({ open, onClose, onSaved, academicYearId }: {
       <div className="relative w-full max-w-md bg-white shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-250">
         <div className="px-5 py-4 border-b shrink-0 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-bold text-slate-800">Add Capital / Income</h2>
-            <p className="text-xs text-slate-400 mt-0.5">Non-fee inflows for this year</p>
+            <h2 className="text-sm font-bold text-slate-800">Record Other Income</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Non-fee inflows — rental, interest, donations, scrap</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 transition"><X size={16} /></button>
         </div>
+
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           <ErrBanner msg={err} />
-          <Field label="Date" name="date" type="date" required value={date} onChange={setDate} maxDate={today()} />
-          <SelectField label="Income Source" name="cat" required value={category} onChange={setCategory} options={INCOME_CATEGORIES} />
+
+          <Field label="Date Received" name="date" type="date" required value={date} onChange={setDate} maxDate={today()} />
+
           <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Amount (₹) <span className="text-rose-400">*</span></label>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+              Income Category <span className="text-rose-400">*</span>
+            </label>
+            <div className="relative">
+              <select value={category} onChange={e => setCategory(e.target.value)}
+                className="w-full appearance-none border border-slate-200 rounded-lg px-3 py-2.5 pr-9 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 bg-white transition cursor-pointer">
+                <option value="">Select category…</option>
+                {INCOME_CATEGORIES.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            </div>
+            {category && INCOME_CATEGORY_HINTS[category] && (
+              <p className="text-[10px] text-slate-400 mt-1">{INCOME_CATEGORY_HINTS[category]}</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+              Amount Received (₹) <span className="text-rose-400">*</span>
+            </label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
-              <input type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" min="0.01" step="0.01" onWheel={e => e.currentTarget.blur()}
+              <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
+                placeholder="0.00" min="0.01" step="0.01" onWheel={e => e.currentTarget.blur()}
                 className="w-full border border-slate-200 rounded-lg pl-7 pr-3 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 bg-white transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
             </div>
           </div>
+
+          {/* Payment / Receipt Details */}
+          <SelectField label="Received Via" name="mode" required value={paymentMode}
+            onChange={v => { setPaymentMode(v); if (v === 'Cash') { setBankName(''); setTxnRef('') } }}
+            options={PAYMENT_MODES} />
+
+          {needsBankName(paymentMode) && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Bank Name" name="bank" required value={bankName} onChange={setBankName} placeholder="e.g. SBI, HDFC Bank" />
+              <Field label="Ref / UTR / Cheque No" name="ref" value={txnRef} onChange={setTxnRef} placeholder="e.g. UTR123456" />
+            </div>
+          )}
+
           <div>
-            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Description</label>
-            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="e.g. Personal loan from Chairman for new buses…"
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Description / Notes</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2}
+              placeholder="e.g. Ground rental from local cricket club for Jan–Mar"
               className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 bg-white resize-none transition" />
           </div>
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Receipts / Documents</label>
+            <FilePicker files={files} onChange={setFiles} />
+          </div>
         </div>
+
         <div className="px-5 py-4 border-t shrink-0 flex gap-3">
           <button type="button" onClick={onClose} className="flex-1 border border-slate-200 bg-white text-slate-700 rounded-lg py-2.5 text-sm font-semibold hover:bg-slate-50 transition">Cancel</button>
           <button onClick={handleSubmit} disabled={saving} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-2.5 text-sm font-semibold transition flex items-center justify-center gap-2 disabled:opacity-60">
-            {saving ? <><Loader2 size={14} className="animate-spin" />Saving…</> : 'Add Capital Entry'}
+            {saving ? <><Loader2 size={14} className="animate-spin" />Saving…</> : 'Record Income'}
           </button>
         </div>
       </div>
@@ -752,7 +870,7 @@ function BillCard({ bill, onPay, onAddItem }: {
                         <div>
                           <div className="text-xs text-slate-700 font-medium">{fmtINR(p.amount_paid)}</div>
                           <div className="text-[10px] text-slate-400 mt-0.5">
-                            {fmtDate(p.payment_date)}{p.payment_mode ? ` · ${p.payment_mode}` : ''}{p.transaction_reference ? ` · ${p.transaction_reference}` : ''}
+                            {fmtDate(p.payment_date)}{p.payment_mode ? ` · ${p.payment_mode}` : ''}{p.bank_name ? ` · ${p.bank_name}` : ''}{p.transaction_reference ? ` · ${p.transaction_reference}` : ''}
                           </div>
                         </div>
                         {pReceipts.length > 0 && <ViewReceiptsBtn fileKeys={pReceipts} />}
@@ -895,46 +1013,691 @@ function BillsTab({ bills, onAdd, onPay, onAddItem }: {
 
 // ─── Capital Tab ──────────────────────────────────────────────────────────────
 
-function CapitalTab({ income, onAdd }: { income: OtherIncomeRow[]; onAdd: () => void }) {
-  const total = income.reduce((s, r) => s + Number(r.amount), 0)
+function OtherIncomeTab({ income, onAdd }: { income: OtherIncomeRow[]; onAdd: () => void }) {
+  const [search, setSearch] = useState('')
+  const [catFilter, setCatFilter] = useState('All')
+
+  const filtered = useMemo(() => income.filter(r => {
+    if (catFilter !== 'All' && r.income_category !== catFilter) return false
+    if (search) {
+      const q = search.toLowerCase()
+      if (!r.income_category.toLowerCase().includes(q) && !(r.description ?? '').toLowerCase().includes(q) && !(r.bank_name ?? '').toLowerCase().includes(q)) return false
+    }
+    return true
+  }), [income, catFilter, search])
+
+  const total = filtered.reduce((s, r) => s + Number(r.amount), 0)
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-400">Non-fee capital inflows · Admin &amp; Accountant only</p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex-1 relative min-w-48">
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search category, description, bank…"
+            className="w-full border border-slate-200 rounded-lg pl-3 pr-8 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 bg-white" />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <div className="relative">
+          <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+            className="appearance-none bg-white border border-slate-200 rounded-lg px-3 py-2 pr-7 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer">
+            <option value="All">All Categories</option>
+            {INCOME_CATEGORIES.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+          <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+        </div>
         <button onClick={onAdd} className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
-          <Plus size={14} /> Add Entry
+          <Plus size={14} /> Record Income
         </button>
       </div>
 
-      {income.length === 0 ? (
+      {filtered.length > 0 && (
+        <p className="text-xs text-slate-400">
+          {filtered.length} entr{filtered.length !== 1 ? 'ies' : 'y'} · Total <span className="font-semibold text-emerald-700">{fmtINR(total)}</span>
+        </p>
+      )}
+
+      {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-3">
             <IndianRupee size={20} className="text-slate-300" />
           </div>
-          <p className="text-sm text-slate-400">No capital entries recorded yet.</p>
+          <p className="text-sm text-slate-400">{search || catFilter !== 'All' ? 'No entries match the current filters.' : 'No other income recorded yet.'}</p>
+          {!search && catFilter === 'All' && (
+            <p className="text-xs text-slate-400 mt-1">Record rental income, bank interest, donations, scrap sales and more.</p>
+          )}
         </div>
       ) : (
         <div className="space-y-2">
-          {income.map(row => {
+          {filtered.map(row => {
             const catColor = INCOME_CAT_COLORS[row.income_category] ?? 'bg-slate-100 text-slate-600 border-slate-200'
+            const receipts = row.receipt_object_keys ?? []
             return (
-              <div key={row.id} className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center gap-3 hover:border-slate-300 transition">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${catColor}`}>{row.income_category}</span>
-                    <span className="text-xs text-slate-400">{fmtDate(row.date_received)}</span>
+              <div key={row.id} className="bg-white border border-slate-200 rounded-xl px-4 py-3 hover:border-slate-300 transition">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    {/* Top row: category badge + date */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${catColor}`}>
+                        {row.income_category}
+                      </span>
+                      <span className="text-xs text-slate-400">{fmtDate(row.date_received)}</span>
+                      {row.payment_mode && (
+                        <span className="text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                          {row.payment_mode}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Description */}
+                    {row.description && (
+                      <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{row.description}</p>
+                    )}
+
+                    {/* Payment meta row */}
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {row.bank_name && (
+                        <span className="text-[10px] text-slate-500 font-medium">{row.bank_name}</span>
+                      )}
+                      {row.bank_name && row.transaction_reference && (
+                        <span className="text-[10px] text-slate-300">·</span>
+                      )}
+                      {row.transaction_reference && (
+                        <span className="text-[10px] text-slate-400 font-mono">{row.transaction_reference}</span>
+                      )}
+                      {(row.bank_name || row.transaction_reference) && row.staff_name && (
+                        <span className="text-[10px] text-slate-300">·</span>
+                      )}
+                      {row.staff_name && (
+                        <span className="text-[10px] text-slate-400">Logged by {row.staff_name}</span>
+                      )}
+                    </div>
                   </div>
-                  {row.description && <p className="text-xs text-slate-500 mt-1 truncate">{row.description}</p>}
-                  {row.staff_name && <p className="text-[10px] text-slate-400 mt-0.5">Logged by {row.staff_name}</p>}
+
+                  {/* Right: amount + receipt */}
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span className="text-sm font-bold text-emerald-700">{fmtINR(Number(row.amount))}</span>
+                    {receipts.length > 0 && <ViewReceiptsBtn fileKeys={receipts} />}
+                  </div>
                 </div>
-                <span className="text-sm font-bold text-emerald-700 shrink-0">{fmtINR(Number(row.amount))}</span>
               </div>
             )
           })}
-          <div className="flex items-center justify-between px-4 py-2 bg-emerald-50 border border-emerald-100 rounded-xl">
-            <span className="text-xs font-semibold text-emerald-700">Total Capital — {income.length} entr{income.length !== 1 ? 'ies' : 'y'}</span>
+
+          <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-50 border border-emerald-100 rounded-xl mt-1">
+            <span className="text-xs font-semibold text-emerald-700">
+              Total Other Income — {filtered.length} entr{filtered.length !== 1 ? 'ies' : 'y'}
+            </span>
             <span className="text-sm font-bold text-emerald-700">{fmtINR(total)}</span>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Create Loan Drawer ───────────────────────────────────────────────────────
+
+function CreateLoanDrawer({ open, onClose, onSaved, academicYearId }: {
+  open: boolean; onClose: () => void; onSaved: () => void; academicYearId: string
+}) {
+  const [loanType, setLoanType] = useState<'LOAN_GIVEN' | 'LOAN_RECEIVED'>('LOAN_RECEIVED')
+  const [partyName, setPartyName] = useState('')
+  const [principal, setPrincipal] = useState('')
+  const [interestRate, setInterestRate] = useState('0')
+  const [dateExecuted, setDateExecuted] = useState(today())
+  const [dueDate, setDueDate] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (open) {
+      setLoanType('LOAN_RECEIVED'); setPartyName(''); setPrincipal('')
+      setInterestRate('0'); setDateExecuted(today()); setDueDate(''); setErr('')
+    }
+  }, [open])
+
+  const handleSubmit = async () => {
+    setSaving(true); setErr('')
+    const p = parseFloat(principal)
+    const r = parseFloat(interestRate)
+    if (!partyName.trim()) { setErr('Party name is required.'); setSaving(false); return }
+    if (isNaN(p) || p <= 0) { setErr('Principal must be a positive amount.'); setSaving(false); return }
+    if (p > 100_000_000) { setErr('Principal cannot exceed ₹10 Crore.'); setSaving(false); return }
+    if (isNaN(r) || r < 0 || r > 100) { setErr('Interest rate must be between 0 and 100.'); setSaving(false); return }
+
+    const result = await createLoan({
+      academic_year_id: academicYearId,
+      loan_type: loanType,
+      party_name: partyName,
+      initial_principal: p,
+      interest_rate_percentage: r,
+      date_executed: dateExecuted,
+      due_date: dueDate || undefined,
+    })
+    setSaving(false)
+    if (result.error) { setErr(result.error); return }
+    toast.success('Loan created. Initial disbursement logged.')
+    onSaved(); onClose()
+  }
+
+  if (!open) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-lg bg-white shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-250">
+        <div className="px-5 py-4 border-b shrink-0 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">New Loan Record</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Initial disbursement is auto-logged on save</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 transition"><X size={16} /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <ErrBanner msg={err} />
+
+          {/* Loan Type Toggle */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Loan Type <span className="text-rose-400">*</span></label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['LOAN_RECEIVED', 'LOAN_GIVEN'] as const).map(type => (
+                <button key={type} type="button" onClick={() => setLoanType(type)}
+                  className={`flex items-center gap-2.5 px-4 py-3 rounded-xl border text-sm font-semibold transition ${
+                    loanType === type
+                      ? type === 'LOAN_RECEIVED'
+                        ? 'bg-blue-600 border-blue-600 text-white'
+                        : 'bg-violet-600 border-violet-600 text-white'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                  }`}>
+                  {type === 'LOAN_RECEIVED'
+                    ? <ArrowDownLeft size={16} />
+                    : <ArrowUpRight size={16} />}
+                  {type === 'LOAN_RECEIVED' ? 'Money Received' : 'Money Given'}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1.5">
+              {loanType === 'LOAN_RECEIVED' ? 'School borrowed money (e.g. from a bank or chairman).' : 'School lent money to someone (e.g. to a vendor or staff).'}
+            </p>
+          </div>
+
+          <Field label="Party Name" name="party" required value={partyName} onChange={setPartyName}
+            placeholder={loanType === 'LOAN_RECEIVED' ? 'e.g. HDFC Bank / Chairman' : 'e.g. Vendor / Staff Name'} />
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                Principal Amount (₹) <span className="text-rose-400">*</span>
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
+                <input type="number" value={principal} onChange={e => setPrincipal(e.target.value)}
+                  placeholder="0.00" min="0.01" step="0.01" onWheel={e => e.currentTarget.blur()}
+                  className="w-full border border-slate-200 rounded-lg pl-7 pr-3 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 bg-white transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+                Interest Rate (% p.a.)
+              </label>
+              <div className="relative">
+                <input type="number" value={interestRate} onChange={e => setInterestRate(e.target.value)}
+                  placeholder="0" min="0" max="100" step="0.01" onWheel={e => e.currentTarget.blur()}
+                  className="w-full border border-slate-200 rounded-lg pl-3 pr-8 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 bg-white transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">%</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Execution Date" name="dateExec" type="date" required value={dateExecuted} onChange={setDateExecuted} maxDate={today()} />
+            <Field label="Due Date" name="dueDate" type="date" value={dueDate} onChange={setDueDate} />
+          </div>
+
+          {principal && !isNaN(parseFloat(principal)) && parseFloat(principal) > 0 && interestRate && !isNaN(parseFloat(interestRate)) && parseFloat(interestRate) > 0 && (
+            <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+              <p className="text-xs font-semibold text-blue-700 mb-1">Interest Estimate</p>
+              <p className="text-xs text-blue-600">
+                At {parseFloat(interestRate)}% p.a. on {fmtINR(parseFloat(principal))}: ~{fmtINR((parseFloat(principal) * parseFloat(interestRate)) / 100)}/year · ~{fmtINR((parseFloat(principal) * parseFloat(interestRate)) / 1200)}/month
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t shrink-0 flex gap-3">
+          <button type="button" onClick={onClose} className="flex-1 border border-slate-200 bg-white text-slate-700 rounded-lg py-2.5 text-sm font-semibold hover:bg-slate-50 transition">Cancel</button>
+          <button onClick={handleSubmit} disabled={saving}
+            className={`flex-1 text-white rounded-lg py-2.5 text-sm font-semibold transition flex items-center justify-center gap-2 disabled:opacity-60 ${
+              loanType === 'LOAN_RECEIVED' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-violet-600 hover:bg-violet-700'
+            }`}>
+            {saving ? <><Loader2 size={14} className="animate-spin" />Saving…</> : 'Create Loan'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Record Loan Transaction Drawer ──────────────────────────────────────────
+
+function RecordLoanTransactionDrawer({ open, onClose, onSaved, loan }: {
+  open: boolean; onClose: () => void; onSaved: () => void; loan: InternalLoanRow | null
+}) {
+  const [txnType, setTxnType] = useState<'PRINCIPAL_REPAYMENT' | 'INTEREST_PAYMENT'>('PRINCIPAL_REPAYMENT')
+  const [amount, setAmount] = useState('')
+  const [date, setDate] = useState(today())
+  const [paymentMode, setPaymentMode] = useState('Cash')
+  const [txnRef, setTxnRef] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [files, setFiles] = useState<File[]>([])
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (open) {
+      setTxnType('PRINCIPAL_REPAYMENT'); setAmount(''); setDate(today())
+      setPaymentMode('Cash'); setTxnRef(''); setBankName(''); setFiles([]); setErr('')
+    }
+  }, [open])
+
+  const handleSubmit = async () => {
+    if (!loan) return
+    setSaving(true); setErr('')
+    const amt = parseFloat(amount)
+    if (isNaN(amt) || amt <= 0) { setErr('Amount must be positive.'); setSaving(false); return }
+    if (txnType === 'PRINCIPAL_REPAYMENT' && amt > loan.remaining_principal_balance + 0.001) {
+      setErr(`Repayment cannot exceed remaining principal balance of ${fmtINR(loan.remaining_principal_balance)}.`)
+      setSaving(false); return
+    }
+    if (needsBankName(paymentMode) && !bankName.trim()) {
+      setErr('Bank name is required for non-cash payments.'); setSaving(false); return
+    }
+
+    let receiptKeys: string[] = []
+    if (files.length > 0) {
+      try {
+        receiptKeys = await Promise.all(files.map(async file => {
+          const { signedUrl, fileKey } = await getUploadUrl(file.type || 'application/octet-stream')
+          const res = await fetch(signedUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+          if (!res.ok) throw new Error('Upload failed')
+          return fileKey
+        }))
+      } catch { setErr('Receipt upload failed. Please try again.'); setSaving(false); return }
+    }
+
+    const result = await addLoanTransaction({
+      loan_id: loan.loan_id,
+      transaction_date: date,
+      type: txnType,
+      amount: amt,
+      payment_mode: paymentMode,
+      transaction_reference: txnRef || undefined,
+      bank_name: needsBankName(paymentMode) ? bankName.trim() : undefined,
+      receipt_object_keys: receiptKeys.length ? receiptKeys : undefined,
+    })
+    setSaving(false)
+    if (result.error) { setErr(result.error); return }
+    toast.success(txnType === 'PRINCIPAL_REPAYMENT' ? 'Principal repayment recorded.' : 'Interest payment recorded.')
+    onSaved(); onClose()
+  }
+
+  if (!open || !loan) return null
+
+  const afterPayment = txnType === 'PRINCIPAL_REPAYMENT' && amount && !isNaN(parseFloat(amount))
+    ? loan.remaining_principal_balance - parseFloat(amount)
+    : null
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md bg-white shadow-2xl flex flex-col h-full animate-in slide-in-from-right duration-250">
+        <div className="px-5 py-4 border-b shrink-0 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800">Record Transaction</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{loan.party_name} · {loan.loan_type === 'LOAN_RECEIVED' ? 'Received' : 'Given'}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-slate-100 transition"><X size={16} /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Loan summary */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-1.5">
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Initial Principal</span>
+              <span className="font-semibold text-slate-800">{fmtINR(loan.initial_principal)}</span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-slate-500">Repaid So Far</span>
+              <span className="font-semibold text-emerald-600">{fmtINR(loan.total_principal_repaid)}</span>
+            </div>
+            <div className="flex justify-between text-xs pt-1.5 border-t border-slate-200">
+              <span className="font-semibold text-slate-700">Remaining Principal</span>
+              <span className="font-bold text-blue-700">{fmtINR(loan.remaining_principal_balance)}</span>
+            </div>
+            {loan.total_interest_paid > 0 && (
+              <div className="flex justify-between text-xs">
+                <span className="text-slate-500">Interest Paid So Far</span>
+                <span className="font-semibold text-amber-600">{fmtINR(loan.total_interest_paid)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Transaction type toggle */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Transaction Type <span className="text-rose-400">*</span></label>
+            <div className="grid grid-cols-2 gap-2">
+              {(['PRINCIPAL_REPAYMENT', 'INTEREST_PAYMENT'] as const).map(type => (
+                <button key={type} type="button" onClick={() => setTxnType(type)}
+                  className={`px-3 py-2.5 rounded-xl border text-xs font-semibold transition ${
+                    txnType === type
+                      ? type === 'PRINCIPAL_REPAYMENT'
+                        ? 'bg-emerald-600 border-emerald-600 text-white'
+                        : 'bg-amber-500 border-amber-500 text-white'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                  }`}>
+                  {TXN_TYPE_LABELS[type]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <ErrBanner msg={err} />
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
+              Amount (₹) <span className="text-rose-400">*</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">₹</span>
+              <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
+                placeholder="0.00" min="0.01" step="0.01" onWheel={e => e.currentTarget.blur()}
+                className="w-full border border-slate-200 rounded-lg pl-7 pr-3 py-2.5 text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-400 bg-white transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
+            </div>
+            {afterPayment !== null && (
+              <div className={`mt-2 px-3 py-2 rounded-lg text-xs font-semibold flex justify-between ${afterPayment <= 0.01 ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}>
+                <span>{afterPayment <= 0.01 ? 'Loan will be fully settled' : 'Remaining principal after this payment'}</span>
+                <span>{afterPayment <= 0.01 ? '₹0' : fmtINR(afterPayment)}</span>
+              </div>
+            )}
+          </div>
+
+          <Field label="Transaction Date" name="date" type="date" required value={date} onChange={setDate} maxDate={today()} />
+
+          <SelectField label="Payment Mode" name="mode" required value={paymentMode} onChange={v => { setPaymentMode(v); if (v === 'Cash' || v === 'Internal Adjustment') { setBankName(''); setTxnRef('') } }} options={LOAN_PAYMENT_MODES} />
+
+          {needsBankName(paymentMode) && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Bank Name" name="bank" required value={bankName} onChange={setBankName} placeholder="e.g. HDFC Bank" />
+              <Field label="Ref / UTR / Cheque" name="ref" value={txnRef} onChange={setTxnRef} placeholder="e.g. UTR123" />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Receipts / Vouchers</label>
+            <FilePicker files={files} onChange={setFiles} />
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-t shrink-0 flex gap-3">
+          <button type="button" onClick={onClose} className="flex-1 border border-slate-200 bg-white text-slate-700 rounded-lg py-2.5 text-sm font-semibold hover:bg-slate-50 transition">Cancel</button>
+          <button onClick={handleSubmit} disabled={saving}
+            className={`flex-1 text-white rounded-lg py-2.5 text-sm font-semibold transition flex items-center justify-center gap-2 disabled:opacity-60 ${
+              txnType === 'PRINCIPAL_REPAYMENT' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-500 hover:bg-amber-600'
+            }`}>
+            {saving ? <><Loader2 size={14} className="animate-spin" />Saving…</> : 'Record Transaction'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Loan Card ────────────────────────────────────────────────────────────────
+
+function LoanCard({ loan, onAddTransaction }: {
+  loan: InternalLoanRow
+  onAddTransaction: (l: InternalLoanRow) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const st = LOAN_STATUS_STYLES[loan.status] ?? LOAN_STATUS_STYLES.Active
+  const isReceived = loan.loan_type === 'LOAN_RECEIVED'
+  const repaidPct = loan.initial_principal > 0
+    ? Math.min(100, (loan.total_principal_repaid / loan.initial_principal) * 100) : 0
+
+  return (
+    <div className={`bg-white border rounded-xl transition-shadow ${expanded ? 'border-slate-300 shadow-md' : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'}`}>
+      {/* Collapsed Row */}
+      <button className="w-full text-left px-4 py-3.5 flex items-center gap-3" onClick={() => setExpanded(v => !v)}>
+        <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot}`} />
+
+        {/* Type badge */}
+        <span className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-full border shrink-0 ${
+          isReceived ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-violet-50 text-violet-700 border-violet-200'
+        }`}>
+          {isReceived ? <ArrowDownLeft size={9} /> : <ArrowUpRight size={9} />}
+          {isReceived ? 'Received' : 'Given'}
+        </span>
+
+        {/* Main info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-semibold text-slate-800 truncate">{loan.party_name}</span>
+            {loan.interest_rate_percentage > 0 && (
+              <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 shrink-0">
+                {loan.interest_rate_percentage}% p.a.
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 mt-0.5">
+            <span className="text-xs text-slate-400">{fmtDate(loan.date_executed)}</span>
+            {loan.due_date && <span className="text-xs text-slate-400">Due {fmtDate(loan.due_date)}</span>}
+          </div>
+        </div>
+
+        {/* Financial summary */}
+        <div className="text-right shrink-0 hidden sm:block">
+          <div className="text-sm font-bold text-slate-800">{fmtINR(loan.initial_principal)}</div>
+          {loan.remaining_principal_balance > 0.001 && (
+            <div className="text-[11px] text-blue-600 font-semibold">{fmtINR(loan.remaining_principal_balance)} remaining</div>
+          )}
+        </div>
+
+        <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full border shrink-0 ${st.badge}`}>{loan.status}</span>
+        <ChevronRight size={15} className={`text-slate-300 shrink-0 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`} />
+      </button>
+
+      {/* Expanded Detail */}
+      {expanded && (
+        <div className="border-t border-slate-100 px-4 pb-4 pt-3 space-y-4">
+          {/* Repayment Progress */}
+          <div>
+            <div className="flex justify-between text-xs text-slate-400 mb-1.5">
+              <span>Principal repayment progress</span>
+              <span>{repaidPct.toFixed(0)}% repaid</span>
+            </div>
+            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${repaidPct >= 100 ? 'bg-emerald-500' : repaidPct > 0 ? 'bg-blue-400' : 'bg-slate-300'}`}
+                style={{ width: `${repaidPct}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+              <span>Repaid {fmtINR(loan.total_principal_repaid)}</span>
+              <span>Total {fmtINR(loan.initial_principal)}</span>
+            </div>
+          </div>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: 'Remaining Principal', value: fmtINR(loan.remaining_principal_balance), color: 'text-blue-700' },
+              { label: 'Interest Paid', value: fmtINR(loan.total_interest_paid), color: 'text-amber-600' },
+              { label: 'Rate p.a.', value: `${loan.interest_rate_percentage}%`, color: 'text-slate-700' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="bg-slate-50 rounded-lg p-2.5 text-center border border-slate-100">
+                <p className="text-[10px] text-slate-400 mb-0.5">{label}</p>
+                <p className={`text-xs font-bold ${color}`}>{value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Transaction History */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Transaction Ledger</span>
+              {loan.status === 'Active' && (
+                <button onClick={() => onAddTransaction(loan)}
+                  className="flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1 rounded-lg transition">
+                  <Plus size={10} /> Record Transaction
+                </button>
+              )}
+            </div>
+
+            {loan.transactions.length === 0 ? (
+              <p className="text-xs text-slate-400 py-2">No transactions yet.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {loan.transactions.map(txn => {
+                  const typeColor = TXN_TYPE_COLORS[txn.type] ?? 'bg-slate-100 text-slate-600 border-slate-200'
+                  const receipts = txn.receipt_object_keys ?? []
+                  return (
+                    <div key={txn.id} className="flex items-start justify-between py-2 border-b border-slate-50 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${typeColor}`}>
+                            {TXN_TYPE_LABELS[txn.type]}
+                          </span>
+                          <span className="text-xs font-bold text-slate-800">{fmtINR(txn.amount)}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-2">
+                          <span>{fmtDate(txn.transaction_date)}</span>
+                          {txn.payment_mode && <span>· {txn.payment_mode}</span>}
+                          {txn.bank_name && <span>· {txn.bank_name}</span>}
+                          {txn.transaction_reference && <span>· {txn.transaction_reference}</span>}
+                        </div>
+                      </div>
+                      {receipts.length > 0 && <ViewReceiptsBtn fileKeys={receipts} />}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Footer meta */}
+          <div className="text-[10px] text-slate-400 pt-1">
+            {loan.staff_name && <span>Created by {loan.staff_name} · </span>}
+            <span>{fmtDate(loan.created_at)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Loans Tab ────────────────────────────────────────────────────────────────
+
+function LoansTab({ loans, onAdd, onAddTransaction }: {
+  loans: InternalLoanRow[]
+  onAdd: () => void
+  onAddTransaction: (l: InternalLoanRow) => void
+}) {
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState('All')
+  const [statusFilter, setStatusFilter] = useState('All')
+
+  const filtered = useMemo(() => loans.filter(l => {
+    if (typeFilter !== 'All' && l.loan_type !== typeFilter) return false
+    if (statusFilter !== 'All' && l.status !== statusFilter) return false
+    if (search) {
+      const q = search.toLowerCase()
+      if (!l.party_name.toLowerCase().includes(q)) return false
+    }
+    return true
+  }), [loans, typeFilter, statusFilter, search])
+
+  const totalGiven = filtered.filter(l => l.loan_type === 'LOAN_GIVEN').reduce((s, l) => s + l.initial_principal, 0)
+  const totalReceived = filtered.filter(l => l.loan_type === 'LOAN_RECEIVED').reduce((s, l) => s + l.initial_principal, 0)
+  const totalOutstanding = filtered.reduce((s, l) => s + l.remaining_principal_balance, 0)
+  const activeCount = filtered.filter(l => l.status === 'Active').length
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex-1 relative min-w-48">
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search party name…"
+            className="w-full border border-slate-200 rounded-lg pl-3 pr-8 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white" />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+
+        {/* Type filter */}
+        <div className="relative">
+          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)}
+            className="appearance-none bg-white border border-slate-200 rounded-lg px-3 py-2 pr-7 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer">
+            <option value="All">All Types</option>
+            <option value="LOAN_RECEIVED">Received</option>
+            <option value="LOAN_GIVEN">Given</option>
+          </select>
+          <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+        </div>
+
+        {/* Status filter */}
+        <div className="relative">
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+            className="appearance-none bg-white border border-slate-200 rounded-lg px-3 py-2 pr-7 text-xs text-slate-700 outline-none focus:ring-2 focus:ring-blue-400 cursor-pointer">
+            <option value="All">All Status</option>
+            <option value="Active">Active</option>
+            <option value="Settled">Settled</option>
+            <option value="Defaulted">Defaulted</option>
+          </select>
+          <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+        </div>
+
+        <button onClick={onAdd} className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
+          <Plus size={14} /> New Loan
+        </button>
+      </div>
+
+      {/* Summary row */}
+      {loans.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[
+            { label: 'Borrowed', value: fmtINR(totalReceived), color: 'text-blue-700', sub: 'LOAN_RECEIVED' },
+            { label: 'Lent Out', value: fmtINR(totalGiven), color: 'text-violet-700', sub: 'LOAN_GIVEN' },
+            { label: 'Outstanding', value: fmtINR(totalOutstanding), color: 'text-slate-800', sub: 'all active' },
+            { label: 'Active Loans', value: String(activeCount), color: 'text-slate-800', sub: 'loans' },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="bg-white border border-slate-200 rounded-xl px-3 py-2.5">
+              <p className="text-[10px] text-slate-400">{label}</p>
+              <p className={`text-sm font-bold ${color} mt-0.5`}>{value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mb-3">
+            <Landmark size={20} className="text-slate-300" />
+          </div>
+          <p className="text-sm text-slate-400">{search || typeFilter !== 'All' || statusFilter !== 'All' ? 'No loans match the current filters.' : 'No loan records yet.'}</p>
+          {!search && typeFilter === 'All' && statusFilter === 'All' && (
+            <p className="text-xs text-slate-400 mt-1">Track borrowed capital and loans given to vendors or staff.</p>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map(loan => (
+            <LoanCard key={loan.loan_id} loan={loan} onAddTransaction={onAddTransaction} />
+          ))}
         </div>
       )}
     </div>
@@ -973,10 +1736,10 @@ function ExportModal({ open, onClose, bills, otherIncome }: {
               <div className="text-left flex-1 text-sm font-semibold text-rose-700">Expense Bills CSV<span className="text-xs font-normal text-rose-400 ml-2">{filtered.bills.length} records</span></div>
               <Download size={13} className="text-rose-300" />
             </button>
-            <button onClick={() => { downloadCsv('capital.csv', ['Date', 'Source', 'Amount', 'Description'], filtered.income.map(i => [i.date_received, i.income_category, i.amount, i.description])); toast.success('CSV downloaded.') }}
+            <button onClick={() => { downloadCsv('other_income.csv', ['Date', 'Category', 'Amount', 'Mode', 'Bank', 'Ref / UTR', 'Description'], filtered.income.map(i => [i.date_received, i.income_category, i.amount, i.payment_mode, i.bank_name, i.transaction_reference, i.description])); toast.success('CSV downloaded.') }}
               className="w-full flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition">
               <TrendingUp size={15} className="text-emerald-500 shrink-0" />
-              <div className="text-left flex-1 text-sm font-semibold text-emerald-700">Capital CSV<span className="text-xs font-normal text-emerald-400 ml-2">{filtered.income.length} entries</span></div>
+              <div className="text-left flex-1 text-sm font-semibold text-emerald-700">Other Income CSV<span className="text-xs font-normal text-emerald-400 ml-2">{filtered.income.length} entries</span></div>
               <Download size={13} className="text-emerald-300" />
             </button>
           </div>
@@ -988,19 +1751,20 @@ function ExportModal({ open, onClose, bills, otherIncome }: {
 
 // ─── Root Component ───────────────────────────────────────────────────────────
 
-type Tab = 'bills' | 'capital'
+type Tab = 'bills' | 'capital' | 'loans'
 
 export function ExpenseLedgerClient({
-  bills: initialBills, otherIncome: initialIncome,
+  bills: initialBills, otherIncome: initialIncome, loans: initialLoans,
   totalExpenses, totalCapital, academicYearId, academicYearName,
 }: {
-  bills: ExpenseBillSummaryRow[]; otherIncome: OtherIncomeRow[]
+  bills: ExpenseBillSummaryRow[]; otherIncome: OtherIncomeRow[]; loans: InternalLoanRow[]
   totalExpenses: number; totalCapital: number
   academicYearId: string; academicYearName: string; userRole: 'Admin' | 'Accountant'
 }) {
   const [activeTab, setActiveTab] = useState<Tab>('bills')
   const [bills, setBills] = useState(initialBills)
   const [income, setIncome] = useState(initialIncome)
+  const [loans, setLoans] = useState(initialLoans)
   const [summaryExpenses, setSummaryExpenses] = useState(totalExpenses)
   const [summaryCapital, setSummaryCapital] = useState(totalCapital)
 
@@ -1008,15 +1772,22 @@ export function ExpenseLedgerClient({
   const [payBill, setPayBill] = useState<ExpenseBillSummaryRow | null>(null)
   const [addItemBill, setAddItemBill] = useState<ExpenseBillSummaryRow | null>(null)
   const [incomeDrawerOpen, setIncomeDrawerOpen] = useState(false)
+  const [loanDrawerOpen, setLoanDrawerOpen] = useState(false)
+  const [txnLoan, setTxnLoan] = useState<InternalLoanRow | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
   const refresh = useCallback(async () => {
     setRefreshing(true)
     try {
-      const [bRes, iRes] = await Promise.all([getExpenseBills(academicYearId), getOtherIncome(academicYearId)])
+      const [bRes, iRes, lRes] = await Promise.all([
+        getExpenseBills(academicYearId),
+        getOtherIncome(academicYearId),
+        getLoans(academicYearId),
+      ])
       if (bRes.data) { setBills(bRes.data); setSummaryExpenses(bRes.data.reduce((s, b) => s + b.total_bill_amount, 0)) }
       if (iRes.data) { setIncome(iRes.data); setSummaryCapital(iRes.data.reduce((s, r) => s + Number(r.amount), 0)) }
+      if (lRes.data) setLoans(lRes.data)
     } catch { /* revalidation handles hard reload */ }
     finally { setRefreshing(false) }
   }, [academicYearId])
@@ -1024,6 +1795,7 @@ export function ExpenseLedgerClient({
   const net = summaryCapital - summaryExpenses
   const unpaidCount = bills.filter(b => b.status === 'Unpaid').length
   const partialCount = bills.filter(b => b.status === 'Partial').length
+  const activeLoansCount = loans.filter(l => l.status === 'Active').length
 
   return (
     <>
@@ -1031,6 +1803,8 @@ export function ExpenseLedgerClient({
       <AddItemDrawer open={!!addItemBill} onClose={() => setAddItemBill(null)} onSaved={refresh} bill={addItemBill} />
       <RecordPaymentDrawer open={!!payBill} onClose={() => setPayBill(null)} onSaved={refresh} bill={payBill} />
       <IncomeDrawer open={incomeDrawerOpen} onClose={() => setIncomeDrawerOpen(false)} onSaved={refresh} academicYearId={academicYearId} />
+      <CreateLoanDrawer open={loanDrawerOpen} onClose={() => setLoanDrawerOpen(false)} onSaved={refresh} academicYearId={academicYearId} />
+      <RecordLoanTransactionDrawer open={!!txnLoan} onClose={() => setTxnLoan(null)} onSaved={refresh} loan={txnLoan} />
       <ExportModal open={exportOpen} onClose={() => setExportOpen(false)} bills={bills} otherIncome={income} />
 
       <div className="max-w-4xl mx-auto space-y-6">
@@ -1048,15 +1822,15 @@ export function ExpenseLedgerClient({
           </button>
         </div>
 
-        {/* 3-stat bar */}
-        <div className="grid grid-cols-3 gap-3">
+        {/* Stat bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <p className="text-xs text-slate-400 mb-1">Total Billed</p>
             <p className="text-lg font-bold text-rose-600">{fmtINR(summaryExpenses)}</p>
             <p className="text-[10px] text-slate-400 mt-0.5">{bills.length} bill{bills.length !== 1 ? 's' : ''}</p>
           </div>
           <div className="bg-white border border-slate-200 rounded-xl p-4">
-            <p className="text-xs text-slate-400 mb-1">Capital In</p>
+            <p className="text-xs text-slate-400 mb-1">Other Income</p>
             <p className="text-lg font-bold text-emerald-600">{fmtINR(summaryCapital)}</p>
             <p className="text-[10px] text-slate-400 mt-0.5">{income.length} entr{income.length !== 1 ? 'ies' : 'y'}</p>
           </div>
@@ -1068,13 +1842,21 @@ export function ExpenseLedgerClient({
               {(unpaidCount > 0 || partialCount > 0) && ` · ${unpaidCount + partialCount} pending`}
             </p>
           </div>
+          <div className="bg-white border border-slate-200 rounded-xl p-4">
+            <p className="text-xs text-slate-400 mb-1">Active Loans</p>
+            <p className="text-lg font-bold text-slate-800">{activeLoansCount}</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              {fmtINR(loans.filter(l => l.status === 'Active').reduce((s, l) => s + l.remaining_principal_balance, 0))} outstanding
+            </p>
+          </div>
         </div>
 
         {/* Tabs */}
         <div className="flex border-b border-slate-200 -mb-3">
           {([
             { key: 'bills' as Tab, label: 'Expense Bills', count: bills.length },
-            { key: 'capital' as Tab, label: 'Capital & Ledger', count: income.length },
+            { key: 'capital' as Tab, label: 'Other Income', count: income.length },
+            { key: 'loans' as Tab, label: 'Loans', count: loans.length },
           ] as const).map(tab => (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 transition-colors -mb-px ${
@@ -1096,7 +1878,10 @@ export function ExpenseLedgerClient({
             <BillsTab bills={bills} onAdd={() => setBillDrawerOpen(true)} onPay={setPayBill} onAddItem={setAddItemBill} />
           )}
           {activeTab === 'capital' && (
-            <CapitalTab income={income} onAdd={() => setIncomeDrawerOpen(true)} />
+            <OtherIncomeTab income={income} onAdd={() => setIncomeDrawerOpen(true)} />
+          )}
+          {activeTab === 'loans' && (
+            <LoansTab loans={loans} onAdd={() => setLoanDrawerOpen(true)} onAddTransaction={setTxnLoan} />
           )}
         </div>
       </div>
