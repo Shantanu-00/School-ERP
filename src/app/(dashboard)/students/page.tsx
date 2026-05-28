@@ -124,7 +124,7 @@ export default async function StudentsPage({
     if (!invoices) return { paid: 0, total: 0, pending: 0, hasTuitionInvoice: false };
     const tuition = invoices.filter(isTuitionFeeInvoice)
     return tuition.reduce((acc, inv) => {
-      const paid = inv.fee_payments?.reduce((pAcc: number, p: any) => pAcc + p.amount_paid, 0) || 0
+      const paid = inv.fee_payments?.filter((p: any) => p.clearance_status === 'Cleared').reduce((pAcc: number, p: any) => pAcc + p.amount_paid, 0) || 0
       return {
         paid: acc.paid + paid,
         total: acc.total + inv.total_amount,

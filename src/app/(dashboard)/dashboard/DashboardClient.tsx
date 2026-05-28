@@ -64,6 +64,7 @@ type Props = {
   initialFeeLogs: FeeLog[]; initialFeeLogsHasMore: boolean
   initialPocketMoneyLogs: PmLog[]; initialPocketMoneyLogsHasMore: boolean
   initialCashflow: CashflowData
+  pendingClearanceCount?: number
   userRole: 'Admin' | 'Accountant' | 'Teacher'; userName: string
 }
 
@@ -391,7 +392,7 @@ function ExpensesTab({ ex, academicYear }: { ex: NonNullable<ExpenseData>; acade
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
-export function DashboardClient({ academicYear, allYears, studentData: d, formerData: f, staffData: initialStaff, expenseData: ex, initialFeeLogs, initialFeeLogsHasMore, initialPocketMoneyLogs, initialPocketMoneyLogsHasMore, initialCashflow, userRole, userName }: Props) {
+export function DashboardClient({ academicYear, allYears, studentData: d, formerData: f, staffData: initialStaff, expenseData: ex, initialFeeLogs, initialFeeLogsHasMore, initialPocketMoneyLogs, initialPocketMoneyLogsHasMore, initialCashflow, pendingClearanceCount = 0, userRole, userName }: Props) {
   const [mainTab, setMainTab] = useState<'overview' | 'students' | 'staff' | 'expenses'>('overview')
   const [subTab, setSubTab] = useState<'overview' | 'active' | 'former' | 'pocket'>('overview')
   const [isPending, startTransition] = useTransition()
@@ -513,6 +514,15 @@ export function DashboardClient({ academicYear, allYears, studentData: d, former
 
       {/* ════════ OVERVIEW ════════ */}
       {mainTab === 'overview' && (<div className="space-y-6">
+        {isFinance && pendingClearanceCount > 0 && (
+          <Link href="/finance/pending-clearance" className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-xl px-5 py-3.5 hover:bg-amber-100 transition group">
+            <Clock size={18} className="text-amber-600 shrink-0" />
+            <span className="text-sm text-amber-800 flex-1">
+              <strong>{pendingClearanceCount}</strong> payment{pendingClearanceCount !== 1 ? 's' : ''} pending clearance verification (Bank Transfer / Cheque)
+            </span>
+            <ChevronRight size={16} className="text-amber-400 group-hover:text-amber-600 transition" />
+          </Link>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* Students card */}
           <button onClick={() => { if (isFinance) { setMainTab('students'); setSubTab('overview') } }} className="text-left">

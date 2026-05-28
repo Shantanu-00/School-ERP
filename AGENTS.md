@@ -537,3 +537,205 @@ WHERE net_payable IS NULL;
 -- Step 4: Now enforce the NOT NULL constraint on net_payable
 ALTER TABLE public.teacher_payroll 
 ALTER COLUMN net_payable SET NOT NULL;
+
+-- 1. Create the auto-incrementing sequence for Fee Receipts
+CREATE SEQUENCE IF NOT EXISTS fee_receipt_seq START 1000;
+
+-- 2. Add the final necessary columns to fee_payments
+ALTER TABLE public.fee_payments
+  -- The core tracking number
+  ADD COLUMN receipt_number TEXT UNIQUE DEFAULT 'FEE-' || nextval('fee_receipt_seq'::regclass),
+  
+  -- The Bank Name (Stored as text for historical accuracy)
+  ADD COLUMN bank_name TEXT,
+  
+  -- Let's also add a 'payment_date' if you don't already have it
+  -- (Sometimes the cheque date is different from the row creation date)
+  ADD COLUMN instrument_date DATE;
+
+  -- 1. Add a status column to track the real-world state of the money
+ALTER TABLE public.fee_payments
+ADD COLUMN clearance_status TEXT DEFAULT 'Cleared' 
+CHECK (clearance_status IN ('Pending', 'Cleared', 'Bounced', 'Refunded'));
+
+-- 2. Add a date for when it actually hit or failed in the bank
+ALTER TABLE public.fee_payments
+ADD COLUMN clearance_date DATE;
+
+-- 3. Add a column for bank remarks (e.g., "Insufficient Funds", "Signature Mismatch")
+ALTER TABLE public.fee_payments
+ADD COLUMN clearance_remarks TEXT;
+
+-- 1. Create the auto-incrementing sequence for Pocket Money Receipts
+CREATE SEQUENCE IF NOT EXISTS pm_receipt_seq START 1000;
+
+-- 2. Add the specific columns to the pocket money table
+ALTER TABLE public.pocket_money_transactions
+  ADD COLUMN balance_after_transaction NUMERIC(10,2),
+  ADD COLUMN receipt_number TEXT UNIQUE DEFAULT 'PMR-' || nextval('pm_receipt_seq'::regclass),
+  ADD COLUMN bank_name TEXT; -- Useful for logging which bank the UPI transaction came from (e.g., "SBI UPI")
+
+  -- 1. Drop the audit log table first because it references general_expenses
+DROP TABLE IF EXISTS public.expense_audit_logs;
+
+-- 2. Drop the main old expense table
+DROP TABLE IF EXISTS public.general_expenses;
+
+-- 3. Drop the old voucher sequence if you want to completely clean the slate
+DROP SEQUENCE IF EXISTS expense_voucher_seq;
+
+-- 4. Re-create the sequence fresh for your new bills system
+CREATE SEQUENCE expense_voucher_seq START 1000;
+
+-- Step 1: Create the Bills / Invoices Received Table
+CREATE TABLE public.expense_bills (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    academic_year_id UUID REFERENCES public.academic_years(id) ON DELETE RESTRICT,
+    voucher_number TEXT UNIQUE DEFAULT 'EXP-' || nextval('expense_voucher_seq'::regclass),
+    
+    payee_name TEXT NOT NULL, -- e.g., 'John the Contractor'
+    cost_center TEXT DEFAULT 'Main School' CHECK (cost_center IN ('Main School', 'Hostel', 'Mess', 'Transport')),
+    category TEXT NOT NULL, -- e.g., 'Maintenance', 'Construction'
+    
+    status TEXT DEFAULT 'Unpaid' CHECK (status IN ('Unpaid', 'Partial', 'Paid', 'Cancelled')),
+    due_date DATE,
+    date_incurred DATE NOT NULL,
+    
+    logged_by UUID REFERENCES public.staff(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_by UUID REFERENCES public.staff(id),
+    updated_at TIMESTAMPTZ
+);
+
+-- Step 2: Create the Line Items Table (Handles scope additions seamlessly!)
+CREATE TABLE public.expense_bill_items (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    bill_id UUID REFERENCES public.expense_bills(id) ON DELETE CASCADE,
+    description TEXT NOT NULL, -- e.g., 'Initial classroom painting', 'Extra wall construction'
+    amount NUMERIC(10,2) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Step 3: Create the Installment Payments Table
+CREATE TABLE public.expense_payments (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    bill_id UUID REFERENCES public.expense_bills(id) ON DELETE CASCADE,
+    amount_paid NUMERIC(10,2) NOT NULL,
+    payment_date DATE NOT NULL,
+    payment_mode TEXT CHECK (payment_mode IN ('Cash', 'Bank Transfer', 'UPI', 'Cheque')),
+    transaction_reference TEXT, -- Bank UTR, Cheque No
+    receipt_object_keys TEXT[], -- Array for Cloudflare file keys
+    logged_by UUID REFERENCES public.staff(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.expense_bills ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expense_bill_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expense_payments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Strict Admin Accountant Bills" ON public.expense_bills FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+CREATE POLICY "Strict Admin Accountant Bill Items" ON public.expense_bill_items FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+CREATE POLICY "Strict Admin Accountant Expense Payments" ON public.expense_payments FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+
+CREATE OR REPLACE VIEW view_expense_bills_summary AS
+SELECT 
+    b.id AS bill_id,
+    b.voucher_number,
+    b.payee_name,
+    b.category,
+    b.status,
+    b.date_incurred,
+    COALESCE(items.total_bill_amount, 0) AS total_bill_amount,
+    COALESCE(payments.total_amount_paid, 0) AS total_amount_paid,
+    (COALESCE(items.total_bill_amount, 0) - COALESCE(payments.total_amount_paid, 0)) AS balance_due
+FROM public.expense_bills b
+LEFT JOIN (
+    SELECT bill_id, SUM(amount) AS total_bill_amount 
+    FROM public.expense_bill_items 
+    GROUP BY bill_id
+) items ON b.id = items.bill_id
+LEFT JOIN (
+    SELECT bill_id, SUM(amount_paid) AS total_amount_paid 
+    FROM public.expense_payments 
+    GROUP BY bill_id
+) payments ON b.id = payments.bill_id;
+
+-- Table 1: The Master Loan Record (The Agreement)
+CREATE TABLE public.internal_loans (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    academic_year_id UUID REFERENCES public.academic_years(id) ON DELETE RESTRICT,
+    
+    -- LOAN_GIVEN = We lent money out (Asset). LOAN_RECEIVED = We borrowed money in (Liability).
+    loan_type TEXT NOT NULL CHECK (loan_type IN ('LOAN_GIVEN', 'LOAN_RECEIVED')),
+    
+    party_name TEXT NOT NULL,          -- e.g., "Greenwood Campus B" or "Chairman Private Funds"
+    initial_principal NUMERIC(12,2) NOT NULL, -- The original amount borrowed/lent
+    interest_rate_percentage NUMERIC(5,2) DEFAULT 0.00, -- Annual interest rate (if any)
+    
+    date_executed DATE NOT NULL,       -- Start date of the loan
+    due_date DATE,                     -- Optional maturity/payback deadline
+    status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Settled', 'Defaulted')),
+    
+    logged_by UUID REFERENCES public.staff(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ
+);
+
+-- Table 2: The Installments & History Ledger (The "When & How Much")
+CREATE TABLE public.loan_transactions (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    loan_id UUID REFERENCES public.internal_loans(id) ON DELETE CASCADE,
+    
+    transaction_date DATE NOT NULL,
+    
+    -- CRITICAL: Categorize what this payment actually is!
+    type TEXT NOT NULL CHECK (type IN (
+        'INITIAL_DISBURSEMENT', -- The very first payout/collection of the loan money
+        'PRINCIPAL_REPAYMENT',  -- An installment paying down the actual core debt
+        'INTEREST_PAYMENT'      -- Paying off accumulated interest (crucial for tax/accounting)
+    )),
+    
+    amount NUMERIC(12,2) NOT NULL, -- The cash value of this specific transaction
+    
+    -- Payment Metadata for Audit Trails
+    payment_mode TEXT CHECK (payment_mode IN ('Cash', 'Bank Transfer', 'UPI', 'Cheque', 'Internal Adjustment')),
+    transaction_reference TEXT,     -- Bank UTR Number or Cheque Number
+    receipt_object_keys TEXT[],     -- Cloudflare digital signatures/slip uploads
+    
+    logged_by UUID REFERENCES public.staff(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.internal_loans ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.loan_transactions ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Strict Admin Accountant Loans Master" ON public.internal_loans FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+CREATE POLICY "Strict Admin Accountant Loan Transactions" ON public.loan_transactions FOR ALL USING (public.get_user_role() IN ('Admin', 'Accountant'));
+
+CREATE OR REPLACE VIEW view_internal_loans_summary AS
+SELECT 
+    l.id AS loan_id,
+    l.loan_type,
+    l.party_name,
+    l.initial_principal,
+    l.interest_rate_percentage,
+    l.status,
+    -- Sum up all principal repayments made over time
+    COALESCE(p.total_principal_repaid, 0) AS total_principal_repaid,
+    -- Sum up all interest charges paid over time
+    COALESCE(i.total_interest_paid, 0) AS total_interest_paid,
+    -- Live Balance = Original Principal - What has been paid back
+    (l.initial_principal - COALESCE(p.total_principal_repaid, 0)) AS remaining_principal_balance
+FROM public.internal_loans l
+LEFT JOIN (
+    SELECT loan_id, SUM(amount) AS total_principal_repaid 
+    FROM public.loan_transactions 
+    WHERE type = 'PRINCIPAL_REPAYMENT'
+    GROUP BY loan_id
+) p ON l.id = p.loan_id
+LEFT JOIN (
+    SELECT loan_id, SUM(amount) AS total_interest_paid 
+    FROM public.loan_transactions 
+    WHERE type = 'INTEREST_PAYMENT'
+    GROUP BY loan_id
+) i ON l.id = i.loan_id;

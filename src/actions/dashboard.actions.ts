@@ -170,7 +170,7 @@ export async function getDashboardStudentData(academicYearId: string) {
 
   const { data: allInvoices } = await supabase
     .from('fee_invoices')
-    .select('id, student_id, enrollment_id, total_amount, status, fee_payments(amount_paid)')
+    .select('id, student_id, enrollment_id, total_amount, status, fee_payments(amount_paid, clearance_status)')
     .or(orParts.join(','))
 
   let totalFeesToCollect = 0, totalFeesCollected = 0, totalCurrentOutstanding = 0, activeStudentsPastArrears = 0
@@ -183,7 +183,7 @@ export async function getDashboardStudentData(academicYearId: string) {
     const sid = (inv.student_id as string) || enrollmentToStudent.get(inv.enrollment_id) || null
     if (!sid) continue
 
-    const paid = ((inv.fee_payments || []) as any[]).reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
+    const paid = ((inv.fee_payments || []) as any[]).filter((p: any) => p.clearance_status === 'Cleared').reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
     const pending = Math.max(0, Number(inv.total_amount) - paid)
 
     const isCurrentYear = currentEnrollmentIds.has(inv.enrollment_id) ||
@@ -227,7 +227,7 @@ export async function getDashboardStudentData(academicYearId: string) {
 
     const cls = get(enr, 'classes')
     if (!cls || !classMap[cls.id]) continue
-    const paid = ((inv.fee_payments || []) as any[]).reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
+    const paid = ((inv.fee_payments || []) as any[]).filter((p: any) => p.clearance_status === 'Cleared').reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
     classMap[cls.id].feesToCollect += Number(inv.total_amount)
     classMap[cls.id].feesPending += Math.max(0, Number(inv.total_amount) - paid)
   }
@@ -267,12 +267,12 @@ export async function getAllFormerStudentsData() {
     if (cls) lastClassMap.set(sid, `${cls.grade_level} - ${cls.section}`); if (ay) lastYearMap.set(sid, ay.name)
   }
 
-  const { data: invoices } = await supabase.from('fee_invoices').select('id, student_id, total_amount, fee_payments(amount_paid)').in('student_id', ids)
+  const { data: invoices } = await supabase.from('fee_invoices').select('id, student_id, total_amount, fee_payments(amount_paid, clearance_status)').in('student_id', ids)
   const dues: Record<string, { totalOwed: number; totalPaid: number; pending: number }> = {}
   for (const inv of (invoices || [])) {
     const sid = inv.student_id as string; if (!sid) continue
     if (!dues[sid]) dues[sid] = { totalOwed: 0, totalPaid: 0, pending: 0 }
-    const paid = ((inv.fee_payments || []) as any[]).reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
+    const paid = ((inv.fee_payments || []) as any[]).filter((p: any) => p.clearance_status === 'Cleared').reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
     dues[sid].totalOwed += Number(inv.total_amount); dues[sid].totalPaid += paid; dues[sid].pending += Math.max(0, Number(inv.total_amount) - paid)
   }
 
@@ -454,21 +454,39 @@ export async function getDashboardExpenseData(academicYearId: string) {
   const { error, supabase } = await getAuthStaff()
   if (error || !supabase) return { error, data: null }
 
-  // Expenses
-  const { data: expenses } = await supabase
-    .from('general_expenses')
-    .select('id, category, amount, date_incurred, cost_center, payee_name, payment_mode, voucher_number, description, transaction_reference, logged_by_staff:staff!logged_by(name)')
+  // Fetch bills with their items (for committed spend totals)
+  const { data: bills } = await supabase
+    .from('expense_bills')
+    .select('id, category, cost_center, payee_name, date_incurred, voucher_number, logged_by_staff:staff!logged_by(name), expense_bill_items(amount), expense_payments(payment_mode)')
     .eq('academic_year_id', academicYearId)
     .order('date_incurred', { ascending: false })
 
-  const allExp = expenses || []
-  const totalExpenses = allExp.reduce((s, e) => s + Number(e.amount), 0)
+  const allBills = bills || []
+
+  // Flatten to per-bill totals
+  const allExp = allBills.map((b: any) => {
+    const itemSum = (b.expense_bill_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0)
+    const modes: string[] = [...new Set((b.expense_payments || []).map((p: any) => p.payment_mode).filter(Boolean))]
+    return {
+      id: b.id,
+      category: b.category,
+      amount: itemSum,
+      date_incurred: b.date_incurred,
+      cost_center: b.cost_center || 'Main School',
+      payee_name: b.payee_name || '',
+      payment_mode: modes[0] || null,
+      voucher_number: b.voucher_number || '',
+      logged_by_staff: b.logged_by_staff,
+    }
+  })
+
+  const totalExpenses = allExp.reduce((s, e) => s + e.amount, 0)
   const expenseCount = allExp.length
-  const largeCount = allExp.filter(e => Number(e.amount) >= 50000).length
+  const largeCount = allExp.filter(e => e.amount >= 50000).length
 
   // Contextual time windows
   const d1 = daysAgo(1), d2 = daysAgo(2), d7 = daysAgo(7), d30 = daysAgo(30)
-  const sumExpAfter = (cutoff: string) => allExp.filter(e => e.date_incurred >= cutoff).reduce((s, e) => s + Number(e.amount), 0)
+  const sumExpAfter = (cutoff: string) => allExp.filter(e => e.date_incurred >= cutoff).reduce((s, e) => s + e.amount, 0)
   const countExpAfter = (cutoff: string) => allExp.filter(e => e.date_incurred >= cutoff).length
 
   const context = {
@@ -482,19 +500,19 @@ export async function getDashboardExpenseData(academicYearId: string) {
   // Category/Cost center/Mode breakdowns
   const catMap: Record<string, number> = {}, ccMap: Record<string, number> = {}, modeMap: Record<string, number> = {}
   for (const e of allExp) {
-    catMap[e.category] = (catMap[e.category] || 0) + Number(e.amount)
-    ccMap[e.cost_center || 'Main School'] = (ccMap[e.cost_center || 'Main School'] || 0) + Number(e.amount)
-    modeMap[e.payment_mode || 'Unknown'] = (modeMap[e.payment_mode || 'Unknown'] || 0) + Number(e.amount)
+    catMap[e.category] = (catMap[e.category] || 0) + e.amount
+    ccMap[e.cost_center] = (ccMap[e.cost_center] || 0) + e.amount
+    modeMap[e.payment_mode || 'Unknown'] = (modeMap[e.payment_mode || 'Unknown'] || 0) + e.amount
   }
   const toList = (m: Record<string, number>) => Object.entries(m).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
 
-  // All expenses mapped for table
-  const allExpenseRows = allExp.map((e: any) => ({
-    id: e.id, date: e.date_incurred, category: e.category, amount: Number(e.amount),
-    costCenter: e.cost_center || 'Main School', payee: e.payee_name || '',
-    voucher: e.voucher_number || '', mode: e.payment_mode || '',
-    description: e.description || '', reference: e.transaction_reference || '',
-    loggedBy: e.logged_by_staff?.name || null,
+  // All bills mapped for table
+  const allExpenseRows = allExp.map((e) => ({
+    id: e.id, date: e.date_incurred, category: e.category, amount: e.amount,
+    costCenter: e.cost_center, payee: e.payee_name,
+    voucher: e.voucher_number, mode: e.payment_mode || '',
+    description: '', reference: '',
+    loggedBy: (Array.isArray(e.logged_by_staff) ? (e.logged_by_staff as any[])[0] : (e.logged_by_staff as any))?.name || null,
   }))
 
   // Other Income
@@ -517,24 +535,6 @@ export async function getDashboardExpenseData(academicYearId: string) {
     loggedBy: (Array.isArray(i.staff) ? i.staff[0] : i.staff)?.name || null,
   }))
 
-  // Audit logs
-  const { data: auditLogs } = await supabase
-    .from('expense_audit_logs')
-    .select('id, voucher_number, changed_at, old_amount, new_amount, old_category, new_category, old_description, new_description, staff:changed_by(name)')
-    .eq('academic_year_id', academicYearId)
-    .order('changed_at', { ascending: false })
-
-  const allAudits = (auditLogs || []).map((a: any) => ({
-    id: a.id, date: a.changed_at?.split('T')[0] || '', voucher: a.voucher_number || '',
-    oldAmount: Number(a.old_amount), newAmount: Number(a.new_amount),
-    oldCategory: a.old_category, newCategory: a.new_category,
-    oldDescription: a.old_description || '', newDescription: a.new_description || '',
-    changedBy: (Array.isArray(a.staff) ? a.staff[0] : a.staff)?.name || null,
-  }))
-
-  // Unique editors count
-  const uniqueEditors = new Set(allAudits.map(a => a.changedBy).filter(Boolean)).size
-
   return {
     data: {
       totalExpenses, expenseCount, largeCount, totalOtherIncome, incomeCount,
@@ -543,7 +543,7 @@ export async function getDashboardExpenseData(academicYearId: string) {
       byCategory: toList(catMap), byCostCenter: toList(ccMap), byPaymentMode: toList(modeMap),
       incomeByCategory: toList(incomeCatMap),
       allExpenses: allExpenseRows, allIncome: allIncomeRows,
-      allAudits, auditCount: allAudits.length, uniqueEditors,
+      allAudits: [], auditCount: 0, uniqueEditors: 0,
     }
   }
 }
@@ -604,7 +604,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   const [feeRes, incomeRes, pmRes, payrollRes, expenseRes, invoiceRes, cumFeeRes, cumIncomeRes, cumPmRes, cumPayrollRes, cumExpenseRes, cumInvoiceRes] = await Promise.all([
     supabase.from('fee_payments')
       .select('id, amount_paid, payment_date, payment_method, transaction_reference, logged_by_staff:staff!logged_by(name), invoice:fee_invoices(invoice_title, student:students(first_name, last_name, admission_number))')
-      .gte('payment_date', dateFrom).lte('payment_date', dateTo),
+      .gte('payment_date', dateFrom).lte('payment_date', dateTo).eq('clearance_status', 'Cleared'),
     supabase.from('other_income')
       .select('id, amount, date_received, income_category, description, staff:logged_by(name)')
       .gte('date_received', dateFrom).lte('date_received', dateTo),
@@ -614,19 +614,19 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
     supabase.from('teacher_payroll')
       .select('id, amount_paid, net_payable, payment_date, payment_mode, remarks, teachers(first_name, last_name), logged_by_staff:staff!logged_by(name)')
       .gte('payment_date', dateFrom).lte('payment_date', dateTo).eq('status', 'Paid'),
-    supabase.from('general_expenses')
-      .select('id, amount, date_incurred, category, description, payment_mode, payee_name, voucher_number, logged_by_staff:staff!logged_by(name)')
-      .gte('date_incurred', dateFrom).lte('date_incurred', dateTo),
+    supabase.from('expense_payments')
+      .select('id, amount_paid, payment_date, payment_mode, transaction_reference, logged_by_staff:staff!logged_by(name), bill:expense_bills(category, payee_name, voucher_number, cost_center)')
+      .gte('payment_date', dateFrom).lte('payment_date', dateTo),
     supabase.from('fee_invoices')
-      .select('id, total_amount, due_date, status, invoice_title, created_at, student:students(first_name, last_name, admission_number), created_by_staff:staff!created_by(name), fee_payments(amount_paid)')
+      .select('id, total_amount, due_date, status, invoice_title, created_at, student:students(first_name, last_name, admission_number), created_by_staff:staff!created_by(name), fee_payments(amount_paid, clearance_status)')
       .gte('created_at', `${dateFrom}T00:00:00`).lte('created_at', `${dateTo}T23:59:59`)
       .in('status', ['Unpaid', 'Partial']),
-    supabase.from('fee_payments').select('amount_paid'),
+    supabase.from('fee_payments').select('amount_paid').eq('clearance_status', 'Cleared'),
     supabase.from('other_income').select('amount'),
     supabase.from('pocket_money_transactions').select('student_id, transaction_type, amount'),
     supabase.from('teacher_payroll').select('amount_paid, net_payable').eq('status', 'Paid'),
-    supabase.from('general_expenses').select('amount'),
-    supabase.from('fee_invoices').select('id, total_amount, status, fee_payments(amount_paid)').in('status', ['Unpaid', 'Partial']),
+    supabase.from('expense_payments').select('amount_paid'),
+    supabase.from('fee_invoices').select('id, total_amount, status, fee_payments(amount_paid, clearance_status)').in('status', ['Unpaid', 'Partial']),
   ])
 
   const fees = feeRes.data || []
@@ -643,13 +643,13 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   const incomeTotal = incomeRows.reduce((s, i: any) => s + Number(i.amount), 0)
   const pmCreditTotal = pmCredits.reduce((s, t: any) => s + Number(t.amount), 0)
   const payrollTotal = payrollRows.reduce((s, p: any) => s + Number(p.amount_paid ?? p.net_payable ?? 0), 0)
-  const expenseTotal = expenseRows.reduce((s, e: any) => s + Number(e.amount), 0)
+  const expenseTotal = expenseRows.reduce((s, e: any) => s + Number(e.amount_paid), 0)
   const pmDebitTotal = pmDebits.reduce((s, t: any) => s + Number(t.amount), 0)
 
-  // Pending dues from invoices in this period
+  // Pending dues from invoices in this period - only count cleared payments
   let pendingDuesTotal = 0, pendingDuesCount = 0
   for (const inv of invoiceRows) {
-    const paid = ((inv.fee_payments || []) as any[]).reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
+    const paid = ((inv.fee_payments || []) as any[]).filter((p: any) => p.clearance_status === 'Cleared').reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
     const pending = Math.max(0, Number(inv.total_amount) - paid)
     if (pending > 0) { pendingDuesTotal += pending; pendingDuesCount++ }
   }
@@ -657,7 +657,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   // All-time pending dues
   let cumPendingDuesTotal = 0, cumPendingDuesCount = 0
   for (const inv of (cumInvoiceRes.data || [])) {
-    const paid = ((inv.fee_payments || []) as any[]).reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
+    const paid = ((inv.fee_payments || []) as any[]).filter((p: any) => p.clearance_status === 'Cleared').reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
     const pending = Math.max(0, Number(inv.total_amount) - paid)
     if (pending > 0) { cumPendingDuesTotal += pending; cumPendingDuesCount++ }
   }
@@ -682,7 +682,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   const cumPmCr = cumPm.filter((t: any) => t.transaction_type === 'CREDIT').reduce((s, t: any) => s + Number(t.amount), 0)
   const cumPmDr = cumPm.filter((t: any) => t.transaction_type === 'DEBIT').reduce((s, t: any) => s + Number(t.amount), 0)
   const cumPayrollTotal = (cumPayrollRes.data || []).reduce((s, p: any) => s + Number(p.amount_paid ?? p.net_payable ?? 0), 0)
-  const cumExpenseTotal = (cumExpenseRes.data || []).reduce((s, e: any) => s + Number(e.amount), 0)
+  const cumExpenseTotal = (cumExpenseRes.data || []).reduce((s, e: any) => s + Number(e.amount_paid), 0)
 
   // Per-student pocket money balances
   const pmStudentBal: Record<string, number> = {}
@@ -725,7 +725,8 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
   }
   for (const e of expenseRows) {
     const stf = Array.isArray((e as any).logged_by_staff) ? (e as any).logged_by_staff[0] : (e as any).logged_by_staff
-    allTx.push({ id: e.id, date: (e as any).date_incurred, source: 'Expense', description: `${(e as any).category}${(e as any).payee_name ? ` — ${(e as any).payee_name}` : ''}`, amount: Number((e as any).amount), direction: 'out', method: (e as any).payment_mode, loggedBy: stf?.name || null })
+    const bill = Array.isArray((e as any).bill) ? (e as any).bill[0] : (e as any).bill
+    allTx.push({ id: e.id, date: (e as any).payment_date, source: 'Expense', description: `${bill?.category || 'Expense'}${bill?.payee_name ? ` — ${bill.payee_name}` : ''}`, amount: Number((e as any).amount_paid), direction: 'out', method: (e as any).payment_mode, loggedBy: stf?.name || null })
   }
   for (const t of pmDebits) {
     const stu = Array.isArray((t as any).students) ? (t as any).students[0] : (t as any).students
@@ -733,7 +734,7 @@ export async function getCashflowData(dateFrom: string, dateTo: string, txOffset
     allTx.push({ id: t.id, date: (t as any).created_at.split('T')[0], source: 'PM Spend', description: stu ? `${stu.first_name} ${stu.last_name} — ${(t as any).description}` : (t as any).description, amount: Number((t as any).amount), direction: 'out', method: (t as any).payment_mode, loggedBy: stf?.name || null })
   }
   for (const inv of invoiceRows) {
-    const paid = ((inv.fee_payments || []) as any[]).reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
+    const paid = ((inv.fee_payments || []) as any[]).filter((p: any) => p.clearance_status === 'Cleared').reduce((s: number, p: any) => s + Number(p.amount_paid), 0)
     const pending = Math.max(0, Number(inv.total_amount) - paid)
     if (pending <= 0) continue
     const stu = (inv as any).student ? (Array.isArray((inv as any).student) ? (inv as any).student[0] : (inv as any).student) : null

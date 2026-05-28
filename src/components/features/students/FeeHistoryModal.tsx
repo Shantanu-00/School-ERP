@@ -20,7 +20,7 @@ export function FeeHistoryModal({ studentId, initialInvoices }: { studentId: str
   // Compute totals
   const totalInvoices = invoices.reduce((acc, inv) => acc + Number(inv.total_amount || 0), 0)
   const totalPaid = invoices.reduce((acc, inv) => {
-    const paid = inv.fee_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0) || 0
+    const paid = inv.fee_payments?.filter((p: any) => p.clearance_status === 'Cleared').reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0) || 0
     return acc + paid
   }, 0)
   const totalOutstanding = totalInvoices - totalPaid
@@ -201,7 +201,7 @@ export function FeeHistoryModal({ studentId, initialInvoices }: { studentId: str
                     </h3>
                     <div className="space-y-4">
                       {yearInvoices.map((inv: any, idx: number) => {
-                        const invPaid = inv.fee_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0) || 0
+                        const invPaid = inv.fee_payments?.filter((p: any) => p.clearance_status === 'Cleared').reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0) || 0
                         const invPending = Math.max(0, Number(inv.total_amount) - invPaid)
                         return (
                           <div key={`inv-${inv.id || idx}`} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col md:flex-row group hover:border-blue-400 hover:shadow-md transition-all">

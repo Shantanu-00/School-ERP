@@ -57,12 +57,13 @@ export async function addPocketMoneyTransaction(
   type: 'CREDIT' | 'DEBIT',
   receipt_object_keys?: string[],
   payment_mode?: 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' | 'Internal Adjustment',
-  transaction_reference?: string
+  transaction_reference?: string,
+  bank_name?: string
 ) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: "Not logged in" }
-  
+
   const { data: staff } = await supabase.from('staff').select('id').eq('auth_id', user.id).single()
   if (!staff) return { error: "Staff record not found" }
 
@@ -72,7 +73,16 @@ export async function addPocketMoneyTransaction(
     return { error: 'Transaction reference is required for non-cash pocket money credits.' }
   }
 
-  const { error } = await supabase.from('pocket_money_transactions').insert({
+  // Compute balance after this transaction
+  const { data: balData } = await supabase
+    .from('pocket_money_balances')
+    .select('current_balance')
+    .eq('student_id', student_id)
+    .maybeSingle()
+  const currentBal = balData?.current_balance || 0
+  const balanceAfter = type === 'CREDIT' ? currentBal + amount : currentBal - amount
+
+  const { data: inserted, error } = await supabase.from('pocket_money_transactions').insert({
     student_id,
     transaction_type: type,
     amount,
@@ -80,11 +90,13 @@ export async function addPocketMoneyTransaction(
     receipt_object_keys: receipt_object_keys || null,
     payment_mode: normalizedMode,
     transaction_reference: normalizedReference || null,
+    bank_name: bank_name?.trim() || null,
+    balance_after_transaction: balanceAfter,
     logged_by: staff.id
-  })
-  
+  }).select('id, receipt_number')
+
   if (error) return { error: error.message }
-  return { success: true }
+  return { success: true, transaction: inserted?.[0] || null }
 }
 
 export async function addPocketMoneyReceipt(transactionId: string, newKeys: string[]) {
@@ -123,7 +135,7 @@ export async function getStudentPendingInvoices(student_id: string) {
 
   let query = supabase
     .from('fee_invoices')
-    .select('id, invoice_title, total_amount, status, due_date, fee_payments(amount_paid), student_enrollments(academic_years(name))')
+    .select('id, invoice_title, total_amount, status, due_date, fee_payments(amount_paid, clearance_status), student_enrollments(academic_years(name))')
     .in('status', ['Unpaid', 'Partial'])
     .order('due_date', { ascending: true })
 
@@ -137,10 +149,12 @@ export async function getStudentPendingInvoices(student_id: string) {
 
   if (invError || !invoices) return { error: 'Failed to fetch invoices.', invoices: [] }
 
-  return { 
+  return {
     invoices: invoices.map(i => {
-      const paid = i.fee_payments?.reduce((acc: number, p: any) => acc + (p.amount_paid || 0), 0) || 0
-      
+      const paid = i.fee_payments
+        ?.filter((p: any) => p.clearance_status === 'Cleared')
+        .reduce((acc: number, p: any) => acc + (p.amount_paid || 0), 0) || 0
+
       let ay = 'Previous Arrears';
       if (i.student_enrollments) {
         const enroll = Array.isArray(i.student_enrollments) ? i.student_enrollments[0] : i.student_enrollments;
@@ -168,7 +182,9 @@ export async function recordFeePayments(
   payment_method: string,
   payment_date: string,
   transaction_reference?: string,
-  receipt_object_keys?: string[]
+  receipt_object_keys?: string[],
+  bank_name?: string,
+  instrument_date?: string
 ) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -177,31 +193,225 @@ export async function recordFeePayments(
   const { data: staff } = await supabase.from('staff').select('id').eq('auth_id', user.id).single()
   if (!staff) return { error: "Staff record not found" }
 
+  const isInstant = payment_method === 'Cash' || payment_method === 'UPI'
+  const clearanceStatus = isInstant ? 'Cleared' : 'Pending'
+  const clearanceDate = isInstant ? payment_date : null
+
   const inserts = payments.map(p => ({
     invoice_id: p.invoice_id,
     amount_paid: p.amount_paid,
-    payment_date: payment_date,
+    payment_date,
     payment_method,
-    transaction_reference: transaction_reference || null,
+    transaction_reference: transaction_reference?.trim() || null,
     receipt_object_keys: receipt_object_keys?.length ? receipt_object_keys : null,
+    bank_name: bank_name?.trim() || null,
+    instrument_date: instrument_date && instrument_date.trim() !== '' ? instrument_date : null,
+    clearance_status: clearanceStatus,
+    clearance_date: clearanceDate,
     logged_by: staff.id
   }))
 
-  const { error } = await supabase.from('fee_payments').insert(inserts)
+  const { data: inserted, error } = await supabase
+    .from('fee_payments')
+    .insert(inserts)
+    .select('id, receipt_number')
 
   if (error) return { error: error.message }
-  
-  // Update invoice statuses
-  for (const p of payments) {
-    const { data: inv } = await supabase.from('fee_invoices').select('id, total_amount, fee_payments(amount_paid)').eq('id', p.invoice_id).single()
+
+  // Only update invoice status if payment is instantly cleared (Cash/UPI)
+  if (isInstant) {
+    for (const p of payments) {
+      const { data: inv } = await supabase
+        .from('fee_invoices')
+        .select('id, total_amount, fee_payments(amount_paid, clearance_status)')
+        .eq('id', p.invoice_id)
+        .single()
+      if (inv) {
+        const clearedTotal = inv.fee_payments
+          ?.filter((fp: any) => fp.clearance_status === 'Cleared')
+          .reduce((a: number, fp: any) => a + Number(fp.amount_paid), 0) || 0
+        const newStatus = clearedTotal >= Number(inv.total_amount) ? 'Paid' : clearedTotal > 0 ? 'Partial' : 'Unpaid'
+        await supabase.from('fee_invoices').update({ status: newStatus }).eq('id', p.invoice_id)
+      }
+    }
+  }
+
+  return { success: true, payments: inserted }
+}
+
+export async function getPendingClearancePayments() {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from('fee_payments')
+    .select(`
+      id, receipt_number, amount_paid, payment_date, payment_method,
+      bank_name, instrument_date, transaction_reference,
+      clearance_status, clearance_date, clearance_remarks,
+      created_at, staff(name),
+      fee_invoices(
+        id, invoice_title, total_amount,
+        student_id, students(first_name, last_name, admission_number),
+        enrollment_id, student_enrollments(academic_years(name), classes(grade_level, section))
+      )
+    `)
+    .eq('clearance_status', 'Pending')
+    .order('payment_date', { ascending: true })
+
+  if (error) return { error: error.message, data: [] }
+
+  const mapped = (data || []).map((p: any) => {
+    const inv = p.fee_invoices
+    const student = inv?.students || inv?.student_enrollments?.students
+    const resolvedStudent = Array.isArray(student) ? student[0] : student
+    const enrollment = inv?.student_enrollments
+    const resolvedEnrollment = Array.isArray(enrollment) ? enrollment[0] : enrollment
+    const ay = resolvedEnrollment?.academic_years
+    const resolvedAy = Array.isArray(ay) ? ay[0] : ay
+    const cls = resolvedEnrollment?.classes
+    const resolvedCls = Array.isArray(cls) ? cls[0] : cls
+
+    return {
+      ...p,
+      student_name: resolvedStudent ? `${resolvedStudent.first_name} ${resolvedStudent.last_name}` : 'Unknown',
+      admission_number: resolvedStudent?.admission_number || '',
+      invoice_title: inv?.invoice_title || 'Fee',
+      academic_year: resolvedAy?.name || 'Unknown',
+      class_label: resolvedCls ? `${resolvedCls.grade_level} - ${resolvedCls.section}` : '',
+      logged_by_name: p.staff?.name || 'System'
+    }
+  })
+
+  return { data: mapped }
+}
+
+export async function updatePaymentClearance(
+  paymentId: string,
+  clearance_status: 'Pending' | 'Cleared' | 'Bounced' | 'Refunded',
+  clearance_date?: string,
+  clearance_remarks?: string
+) {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: "Not logged in" }
+
+  const { data: staff } = await supabase.from('staff').select('id, role').eq('auth_id', user.id).single()
+  if (!staff || !['Admin', 'Accountant'].includes(staff.role)) {
+    return { error: "Only Admin or Accountant can update clearance status" }
+  }
+
+  const update: Record<string, any> = { clearance_status }
+  if (clearance_date) update.clearance_date = clearance_date
+  if (clearance_remarks !== undefined) update.clearance_remarks = clearance_remarks || null
+
+  const { error } = await supabase
+    .from('fee_payments')
+    .update(update)
+    .eq('id', paymentId)
+
+  if (error) return { error: error.message }
+
+  // Recalculate invoice status based only on cleared payments
+  const { data: payment } = await supabase
+    .from('fee_payments')
+    .select('invoice_id')
+    .eq('id', paymentId)
+    .single()
+
+  if (payment?.invoice_id) {
+    const { data: inv } = await supabase
+      .from('fee_invoices')
+      .select('id, total_amount, fee_payments(amount_paid, clearance_status)')
+      .eq('id', payment.invoice_id)
+      .single()
+
     if (inv) {
-      const totalPaid = inv.fee_payments?.reduce((a: number, pInfo: any) => a + Number(pInfo.amount_paid), 0) || 0
-      const newStatus = totalPaid >= Number(inv.total_amount) ? 'Paid' : 'Partial'
-      await supabase.from('fee_invoices').update({ status: newStatus }).eq('id', p.invoice_id)
+      const effectivePaid = inv.fee_payments
+        ?.filter((fp: any) => fp.clearance_status === 'Cleared')
+        .reduce((a: number, fp: any) => a + Number(fp.amount_paid), 0) || 0
+
+      const newStatus = effectivePaid >= Number(inv.total_amount) ? 'Paid' : effectivePaid > 0 ? 'Partial' : 'Unpaid'
+      await supabase.from('fee_invoices').update({ status: newStatus }).eq('id', inv.id)
     }
   }
 
   return { success: true }
+}
+
+export async function getPaymentReceiptData(paymentId: string) {
+  const supabase = await createClient()
+
+  const { data: payment, error } = await supabase
+    .from('fee_payments')
+    .select(`
+      id, receipt_number, amount_paid, payment_date, payment_method,
+      bank_name, instrument_date, transaction_reference,
+      clearance_status, created_at,
+      fee_invoices(
+        id, invoice_title, total_amount, status,
+        student_id,
+        students(id, first_name, last_name, admission_number),
+        enrollment_id,
+        student_enrollments(
+          academic_years(name),
+          classes(grade_level, section)
+        )
+      )
+    `)
+    .eq('id', paymentId)
+    .single()
+
+  if (error || !payment) return { error: error?.message || 'Payment not found' }
+
+  const inv = payment.fee_invoices as any
+  const student = inv?.students
+  const resolvedStudent = Array.isArray(student) ? student[0] : student
+  const enrollment = inv?.student_enrollments
+  const resolvedEnrollment = Array.isArray(enrollment) ? enrollment[0] : enrollment
+  const ay = resolvedEnrollment?.academic_years
+  const resolvedAy = Array.isArray(ay) ? ay[0] : ay
+  const cls = resolvedEnrollment?.classes
+  const resolvedCls = Array.isArray(cls) ? cls[0] : cls
+
+  // Get total paid across all payments for this invoice to compute pending
+  const { data: allPayments } = await supabase
+    .from('fee_payments')
+    .select('amount_paid, clearance_status')
+    .eq('invoice_id', inv?.id)
+
+  const totalPaid = allPayments
+    ?.filter((p: any) => p.clearance_status === 'Cleared' || p.clearance_status === 'Pending')
+    .reduce((a: number, p: any) => a + Number(p.amount_paid), 0) || 0
+  const pendingFee = Math.max(0, Number(inv?.total_amount || 0) - totalPaid)
+
+  // Get pocket money balance
+  const studentId = resolvedStudent?.id || inv?.student_id
+  let pocketBalance = 0
+  if (studentId) {
+    const { data: pmData } = await supabase
+      .from('pocket_money_balances')
+      .select('current_balance')
+      .eq('student_id', studentId)
+      .maybeSingle()
+    pocketBalance = pmData?.current_balance || 0
+  }
+
+  return {
+    receipt_number: payment.receipt_number,
+    receipt_date: payment.payment_date,
+    student_name: resolvedStudent ? `${resolvedStudent.first_name} ${resolvedStudent.last_name}` : 'Unknown',
+    student_id: resolvedStudent?.admission_number || '',
+    student_class: resolvedCls ? `${resolvedCls.grade_level} - ${resolvedCls.section}` : '',
+    academic_year: resolvedAy?.name || '',
+    fee_particular: inv?.invoice_title || 'Tuition Fee',
+    amount_paid: Number(payment.amount_paid),
+    pending_fee_balance: pendingFee,
+    pocket_money_balance: pocketBalance,
+    payment_mode: payment.payment_method || 'Cash',
+    bank_name: payment.bank_name || '',
+    utr_number: payment.transaction_reference || '',
+    total_invoice_amount: Number(inv?.total_amount || 0)
+  }
 }
 
 export async function getMorePocketMoneyTransactions(studentId: string, limit: number, offset: number) {
@@ -220,7 +430,6 @@ export async function getMorePocketMoneyTransactions(studentId: string, limit: n
 export async function getStudentFeeHistory(studentId: string, limit: number, offset: number) {
   const supabase = await createClient()
 
-  // Find all enrollments for this student
   const { data: enrollments } = await supabase
     .from('student_enrollments')
     .select('id, academic_years(name)')
@@ -230,7 +439,10 @@ export async function getStudentFeeHistory(studentId: string, limit: number, off
 
   let query = supabase
     .from('fee_invoices')
-    .select('id, invoice_title, total_amount, status, due_date, created_at, enrollment_id, fee_payments(id, amount_paid, payment_date, payment_method, created_at, receipt_object_keys)')
+    .select(`id, invoice_title, total_amount, status, due_date, created_at, enrollment_id,
+      fee_payments(id, receipt_number, amount_paid, payment_date, payment_method, bank_name,
+        instrument_date, transaction_reference, clearance_status, clearance_date,
+        clearance_remarks, created_at, receipt_object_keys, staff(name))`)
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1)
 
@@ -244,7 +456,6 @@ export async function getStudentFeeHistory(studentId: string, limit: number, off
 
   if (error) return { error: error.message, data: [] }
 
-  // Map academic year back to invoices
   const mappedData = data.map((inv: any) => {
     const enr = enrollments?.find(e => e.id === inv.enrollment_id)
     return {
@@ -352,7 +563,7 @@ export async function generateInvoiceForEnrollment(enrollmentId: string) {
   const dueDate = new Date()
   dueDate.setDate(dueDate.getDate() + 30)
   const invoiceTitle = buildInvoiceTitle({
-    invoiceType: 'Tuition Fee',
+    invoiceType: 'Hostel & Mess',
     academicYearName: yearData?.name || null,
     gradeLevel: classData?.grade_level || null,
     section: classData?.section || null,

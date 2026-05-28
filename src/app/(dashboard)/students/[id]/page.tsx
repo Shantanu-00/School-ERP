@@ -130,7 +130,7 @@ export default async function StudentProfilePage({
       .from('fee_invoices')
       .select(`
         id, invoice_title, total_amount, status, due_date, created_at, enrollment_id, student_id,
-        fee_payments(id, amount_paid, payment_date, payment_method, created_at, staff(name))
+        fee_payments(id, amount_paid, payment_date, payment_method, clearance_status, created_at, staff(name))
       `)
       .order('created_at', { ascending: false })
 
@@ -157,11 +157,13 @@ export default async function StudentProfilePage({
     pocketTransactions = pocketTxData || []
 
     invoiceData.forEach((inv) => {
-      const paid = inv.fee_payments?.reduce((pAcc: number, p: any) => pAcc + Number(p.amount_paid), 0) || 0
+      const paid = inv.fee_payments
+        ?.filter((p: any) => p.clearance_status === 'Cleared')
+        .reduce((pAcc: number, p: any) => pAcc + Number(p.amount_paid), 0) || 0
       const pending = Math.max(0, Number(inv.total_amount) - paid)
-      
+
       pendingFeesTotal += pending
-      
+
       if (inv.academic_year_id === globalActiveYearId) {
         pendingFeesCurrent += pending
       } else {

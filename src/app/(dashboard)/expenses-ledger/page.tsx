@@ -2,9 +2,8 @@ import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import {
-  getExpenses,
+  getExpenseBills,
   getOtherIncome,
-  getExpenseAuditLogs,
   getExpenseLedgerSummary,
 } from '@/actions/expenses.actions'
 import { ExpenseLedgerClient } from './ExpenseLedgerClient'
@@ -46,14 +45,12 @@ export default async function ExpenseLedgerPage() {
   }
 
   const [
-    { data: expenses },
+    { data: bills },
     { data: otherIncome },
-    { data: auditLogs },
     summary,
   ] = await Promise.all([
-    getExpenses(resolvedYearId),
+    getExpenseBills(resolvedYearId),
     getOtherIncome(resolvedYearId),
-    getExpenseAuditLogs(resolvedYearId),
     getExpenseLedgerSummary(resolvedYearId),
   ])
 
@@ -61,9 +58,8 @@ export default async function ExpenseLedgerPage() {
 
   return (
     <ExpenseLedgerClient
-      expenses={expenses ?? []}
+      bills={bills ?? []}
       otherIncome={otherIncome ?? []}
-      auditLogs={auditLogs ?? []}
       totalExpenses={summary.totalExpenses}
       totalCapital={summary.totalCapital}
       academicYearId={resolvedYearId}

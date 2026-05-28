@@ -32,7 +32,9 @@ export default async function FeeHistoryPage({ params }: { params: Promise<{ id:
     .from('fee_invoices')
     .select(`
       id, invoice_title, total_amount, status, due_date, created_at, enrollment_id, student_id,
-      fee_payments(id, amount_paid, payment_date, payment_method, created_at, receipt_object_keys, staff(name))
+      fee_payments(id, receipt_number, amount_paid, payment_date, payment_method, bank_name,
+        instrument_date, transaction_reference, clearance_status, clearance_date,
+        clearance_remarks, created_at, receipt_object_keys, staff(name))
     `)
     .order('created_at', { ascending: false })
 
@@ -53,10 +55,12 @@ export default async function FeeHistoryPage({ params }: { params: Promise<{ id:
     }
   })
 
-  // Compute totals
+  // Compute totals - only count cleared payments
   const totalInvoices = feeInvoices.reduce((acc, inv) => acc + Number(inv.total_amount || 0), 0)
   const totalPaid = feeInvoices.reduce((acc, inv) => {
-    const paid = inv.fee_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0) || 0
+    const paid = inv.fee_payments
+      ?.filter((p: any) => p.clearance_status === 'Cleared')
+      .reduce((sum: number, p: any) => sum + Number(p.amount_paid || 0), 0) || 0
     return acc + paid
   }, 0)
   const totalOutstanding = totalInvoices - totalPaid

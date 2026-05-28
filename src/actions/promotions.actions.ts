@@ -22,7 +22,7 @@ export async function fetchPromotionStudents(fromYearId: string, toYearId: strin
     .select(`
       id, student_id, roll_number, discount_type, discount_mode, discount_value,
       students!inner(admission_number, first_name, last_name, status),
-      fee_invoices(total_amount, status, fee_payments(amount_paid))
+      fee_invoices(total_amount, status, fee_payments(amount_paid, clearance_status))
     `)
     .eq('academic_year_id', fromYearId)
     .eq('class_id', classId)
@@ -50,10 +50,10 @@ export async function fetchPromotionStudents(fromYearId: string, toYearId: strin
     // Calculate pending fees correctly for this enrollment
     let pendingFees = 0;
     if (enr.fee_invoices && Array.isArray(enr.fee_invoices)) {
-      enr.fee_invoices.forEach((inv: { status: string, total_amount: string | number, fee_payments?: { amount_paid: string | number }[] }) => {
+      enr.fee_invoices.forEach((inv: { status: string, total_amount: string | number, fee_payments?: { amount_paid: string | number; clearance_status?: string }[] }) => {
          if (inv.status !== 'Cancelled') {
-            const paid = Array.isArray(inv.fee_payments) 
-               ? inv.fee_payments.reduce((acc: number, p: { amount_paid: string | number }) => acc + Number(p.amount_paid), 0)
+            const paid = Array.isArray(inv.fee_payments)
+               ? inv.fee_payments.filter(p => p.clearance_status === 'Cleared').reduce((acc: number, p) => acc + Number(p.amount_paid), 0)
                : 0;
             pendingFees += (Number(inv.total_amount) - paid);
          }

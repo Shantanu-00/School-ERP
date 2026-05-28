@@ -93,7 +93,7 @@ export async function getStudents({
           status,
           due_date,
           invoice_title,
-          fee_payments (amount_paid)
+          fee_payments (amount_paid, clearance_status)
         )
       ),
       pocket_money_transactions (
@@ -153,7 +153,7 @@ export async function getStudents({
     const sid = inv.student_id as string
     if (!sid) continue
     if (!duesMap[sid]) duesMap[sid] = { previous: 0, current: 0 }
-    const paid = ((inv.fee_payments || []) as any[]).reduce((sum: number, p: any) => sum + Number(p.amount_paid), 0)
+    const paid = ((inv.fee_payments || []) as any[]).filter((p: any) => p.clearance_status === 'Cleared').reduce((sum: number, p: any) => sum + Number(p.amount_paid), 0)
     const pending = Math.max(0, Number(inv.total_amount) - paid)
     if (currentEnrollmentIds.has(inv.enrollment_id)) {
       duesMap[sid].current += pending
@@ -647,7 +647,7 @@ export async function getFormerStudents({
       ),
       fee_invoices (
         total_amount,
-        fee_payments (amount_paid)
+        fee_payments (amount_paid, clearance_status)
       ),
       pocket_money_transactions (
         transaction_type,
@@ -678,7 +678,7 @@ export async function getFormerStudents({
     // Calculate pending dues from all invoices attached to this student
     if (student.fee_invoices && student.fee_invoices.length > 0) {
       student.fee_invoices.forEach((inv: any) => {
-        const paid = inv.fee_payments?.reduce((sum: number, p: any) => sum + Number(p.amount_paid), 0) || 0
+        const paid = inv.fee_payments?.filter((p: any) => p.clearance_status === 'Cleared').reduce((sum: number, p: any) => sum + Number(p.amount_paid), 0) || 0
         pendingDues += Math.max(0, Number(inv.total_amount) - paid)
       })
     }

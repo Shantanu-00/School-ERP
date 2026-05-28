@@ -30,7 +30,7 @@ export default async function DashboardPage() {
 
   const today = new Date().toISOString().split('T')[0]
 
-  const [studentData, formerData, payrollData, expenseData, feeLogs, pocketMoneyLogs, cashflowData] = await Promise.all([
+  const [studentData, formerData, payrollData, expenseData, feeLogs, pocketMoneyLogs, cashflowData, pendingClearanceCount] = await Promise.all([
     getDashboardStudentData(resolvedId),
     getAllFormerStudentsData(),
     getDashboardStaffData('current'),
@@ -38,6 +38,7 @@ export default async function DashboardPage() {
     getFeeLogs(today, today, 0, 10),
     getPocketMoneyLogs(today, today, 0, 10),
     getCashflowData(today, today, 0, 20),
+    supabase.from('fee_payments').select('id', { count: 'exact', head: true }).eq('clearance_status', 'Pending').then(r => r.count || 0),
   ])
 
   return (
@@ -58,6 +59,7 @@ export default async function DashboardPage() {
       initialPocketMoneyLogs={pocketMoneyLogs.data || []}
       initialPocketMoneyLogsHasMore={pocketMoneyLogs.hasMore || false}
       initialCashflow={cashflowData.data}
+      pendingClearanceCount={pendingClearanceCount as number}
       userRole={userRole as 'Admin' | 'Accountant' | 'Teacher'}
       userName={userName}
     />

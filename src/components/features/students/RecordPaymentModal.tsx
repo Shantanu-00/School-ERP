@@ -18,18 +18,32 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
   const [bills, setBills] = useState<FileList | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [printAfterSave, setPrintAfterSave] = useState(false)
+  const [pocketPrintAfterSave, setPocketPrintAfterSave] = useState(false)
   const router = useRouter()
 
   const [invoices, setInvoices] = useState<any[]>([])
   const [loadingInvoices, setLoadingInvoices] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState('Cash')
   const [transactionReference, setTransactionReference] = useState('')
+  const [bankName, setBankName] = useState('')
+  const [instrumentDate, setInstrumentDate] = useState('')
   const [pocketPaymentMethod, setPocketPaymentMethod] = useState<PocketPaymentMode>('Cash')
   const [pocketTransactionReference, setPocketTransactionReference] = useState('')
-  
+  const [pocketBankName, setPocketBankName] = useState('')
+
   const today = new Date().toISOString().split('T')[0]
   const thirtyDaysAgo = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0]
   const [paymentDate, setPaymentDate] = useState(today)
+
+  const BANK_OPTIONS = [
+    'HDFC Bank', 'State Bank of India', 'ICICI Bank', 'Union Bank of India',
+    'Punjab National Bank', 'Bank of Baroda', 'Canara Bank', 'Axis Bank',
+    'Kotak Mahindra Bank', 'Indian Bank', 'Bank of India', 'Central Bank of India', 'Other'
+  ]
+
+  const needsBankDetails = paymentMethod === 'Bank Transfer' || paymentMethod === 'Cheque'
+  const showBankName = paymentMethod !== 'Cash'
 
   const [allocations, setAllocations] = useState<{ id: string, invoiceId: string, amount: string }[]>([
     { id: crypto.randomUUID(), invoiceId: '', amount: '' }
@@ -81,13 +95,19 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
         pocketType,
         fileKeys,
         pocketPaymentMethod,
-        pocketTransactionReference.trim() || undefined
+        pocketTransactionReference.trim() || undefined,
+        pocketPaymentMethod !== 'Cash' ? pocketBankName : undefined
       )
-      
+
       if (result.error) {
         setErrorMsg(result.error)
       } else {
+        const txnId = result.transaction?.id
+        const shouldPrint = pocketPrintAfterSave
         closeAndReset()
+        if (shouldPrint && txnId) {
+          window.open(`/pm-receipt/${txnId}`, '_blank')
+        }
         router.refresh()
       }
     } catch (err: any) {
@@ -144,6 +164,10 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
       setErrorMsg('Please provide a UTR or Transaction Reference number')
       return
     }
+    if (needsBankDetails && !bankName) {
+      setErrorMsg('Please select the bank name for Bank Transfer / Cheque payments')
+      return
+    }
 
     setIsSubmitting(true)
     setErrorMsg('')
@@ -160,12 +184,21 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
         }
       }
 
-      const result = await recordFeePayments(paymentsToRecord, paymentMethod, paymentDate, transactionReference, fileKeys)
-      
+      const result = await recordFeePayments(
+        paymentsToRecord, paymentMethod, paymentDate, transactionReference, fileKeys,
+        showBankName ? bankName : undefined,
+        needsBankDetails ? instrumentDate : undefined
+      )
+
       if (result.error) {
         setErrorMsg(result.error)
       } else {
+        const receiptId = result.payments?.[0]?.id
+        const shouldPrint = printAfterSave
         closeAndReset()
+        if (shouldPrint && receiptId) {
+          window.open(`/receipt/${receiptId}`, '_blank')
+        }
         router.refresh()
       }
     } catch (err: any) {
@@ -187,8 +220,13 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
     setPaymentDate(today)
     setPaymentMethod('Cash')
     setTransactionReference('')
+    setBankName('')
+    setInstrumentDate('')
     setPocketPaymentMethod('Cash')
     setPocketTransactionReference('')
+    setPocketBankName('')
+    setPrintAfterSave(false)
+    setPocketPrintAfterSave(false)
     setAllocations([{ id: crypto.randomUUID(), invoiceId: '', amount: '' }])
   }
 
@@ -372,8 +410,8 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                       {paymentMethod !== 'Cash' && (
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">Transaction Reference / UTR</label>
-                          <input 
-                            type="text" 
+                          <input
+                            type="text"
                             name="transactionReference"
                             value={transactionReference}
                             onChange={(e) => setTransactionReference(e.target.value)}
@@ -381,6 +419,54 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                             className="w-full border-slate-200 rounded-md p-2.5 border focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
                             required={paymentMethod !== 'Cash'}
                           />
+                        </div>
+                      )}
+
+                      {showBankName && (
+                        <div className={`grid grid-cols-1 ${needsBankDetails ? 'sm:grid-cols-2' : ''} gap-4`}>
+                          <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                              Bank Name {needsBankDetails ? '*' : '(Optional)'}
+                            </label>
+                            <select
+                              value={bankName}
+                              onChange={(e) => setBankName(e.target.value)}
+                              className="w-full border-slate-200 rounded-md p-2.5 border outline-none shadow-sm"
+                              required={needsBankDetails}
+                            >
+                              <option value="">-- Select Bank --</option>
+                              {BANK_OPTIONS.map(b => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                          </div>
+                          {needsBankDetails && (
+                            <div>
+                              <label className="block text-sm font-medium text-slate-700 mb-1">
+                                {paymentMethod === 'Cheque' ? 'Cheque Date' : 'Instrument Date'}
+                              </label>
+                              <input
+                                type="date"
+                                value={instrumentDate}
+                                onChange={(e) => setInstrumentDate(e.target.value)}
+                                className="w-full border-slate-200 rounded-md p-2.5 border outline-none shadow-sm"
+                                max={new Date(new Date().setDate(new Date().getDate() + 90)).toISOString().split('T')[0]}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {(paymentMethod === 'Cash' || paymentMethod === 'UPI') && (
+                        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-md">
+                          <p className="text-xs text-emerald-700 font-medium">
+                            {paymentMethod} payments are marked as instantly cleared.
+                          </p>
+                        </div>
+                      )}
+                      {needsBankDetails && (
+                        <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-md">
+                          <p className="text-xs text-amber-700 font-medium">
+                            {paymentMethod} payments will be marked as &quot;Pending Clearance&quot; until verified.
+                          </p>
                         </div>
                       )}
 
@@ -460,22 +546,35 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                     </div>
                   )}
 
-                  <div className="pt-4 flex gap-3">
-                    <button 
+                  <div className="pt-4 flex flex-col sm:flex-row gap-2">
+                    <button
                       type="button"
                       onClick={() => setMode('select')}
-                      className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-md hover:bg-slate-50 font-medium transition"
+                      className="px-4 py-2 border border-slate-200 text-slate-700 rounded-md hover:bg-slate-50 font-medium transition text-sm"
                     >
                       Back
                     </button>
                     {invoices.length > 0 && (
-                      <button 
-                        type="submit"
-                        disabled={isSubmitting || allocations.every(a => !a.invoiceId)}
-                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                      >
-                        {isSubmitting ? <><Loader2 size={16} className="animate-spin" /> Processing</> : 'Confirm Payment'}
-                      </button>
+                      <>
+                        <button
+                          type="submit"
+                          disabled={isSubmitting || allocations.every(a => !a.invoiceId)}
+                          onClick={() => setPrintAfterSave(false)}
+                          className="flex-1 px-4 py-2 bg-slate-700 text-white rounded-md hover:bg-slate-800 font-medium transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                        >
+                          {isSubmitting && !printAfterSave ? <Loader2 size={14} className="animate-spin" /> : null}
+                          Confirm Payment
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={isSubmitting || allocations.every(a => !a.invoiceId)}
+                          onClick={() => setPrintAfterSave(true)}
+                          className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm"
+                        >
+                          {isSubmitting && printAfterSave ? <Loader2 size={14} className="animate-spin" /> : null}
+                          Confirm & Print Receipt
+                        </button>
+                      </>
                     )}
                   </div>
                 </form>
@@ -553,7 +652,7 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                         onChange={(e) => {
                           const next = e.target.value as PocketPaymentMode
                           setPocketPaymentMethod(next)
-                          if (next === 'Cash') setPocketTransactionReference('')
+                          if (next === 'Cash') { setPocketTransactionReference(''); setPocketBankName('') }
                         }}
                       >
                         <option value="Cash">Cash</option>
@@ -581,6 +680,20 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                     )}
                   </div>
 
+                  {pocketPaymentMethod !== 'Cash' && (
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Bank Name (Optional)</label>
+                      <select
+                        value={pocketBankName}
+                        onChange={(e) => setPocketBankName(e.target.value)}
+                        className="w-full border-slate-200 rounded-md p-2.5 border outline-none shadow-sm"
+                      >
+                        <option value="">-- Select Bank --</option>
+                        {BANK_OPTIONS.map(b => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Attach Bill(s) / Receipt(s) (Optional)</label>
                     <input 
@@ -592,24 +705,31 @@ function RecordPaymentModalContent({ studentId, variant = 'default' }: { student
                     />
                   </div>
 
-                  <div className="pt-4 flex gap-3">
-                    <button 
+                  <div className="pt-4 flex flex-col sm:flex-row gap-2">
+                    <button
                       type="button"
-                      onClick={() => {
-                        setMode('select')
-                        setAmount('')
-                        setDescription('')
-                      }}
-                      className="flex-1 px-4 py-2 border border-slate-200 text-slate-700 rounded-md hover:bg-slate-50 font-medium transition"
+                      onClick={() => { setMode('select'); setAmount(''); setDescription('') }}
+                      className="px-4 py-2 border border-slate-200 text-slate-700 rounded-md hover:bg-slate-50 font-medium transition text-sm"
                     >
                       Back
                     </button>
-                    <button 
+                    <button
                       type="submit"
                       disabled={isSubmitting}
-                      className={`flex-1 px-4 py-2 text-white rounded-md font-medium transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed ${pocketType === 'CREDIT' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-orange-600 hover:bg-orange-700'}`}
+                      onClick={() => setPocketPrintAfterSave(false)}
+                      className={`flex-1 px-4 py-2 text-white rounded-md font-medium transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm ${pocketType === 'CREDIT' ? 'bg-slate-700 hover:bg-slate-800' : 'bg-slate-700 hover:bg-slate-800'}`}
                     >
-                      {isSubmitting ? <><Loader2 size={16} className="animate-spin" /> Processing</> : 'Confirm'}
+                      {isSubmitting && !pocketPrintAfterSave ? <Loader2 size={14} className="animate-spin" /> : null}
+                      Save
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      onClick={() => setPocketPrintAfterSave(true)}
+                      className={`flex-1 px-4 py-2 text-white rounded-md font-medium transition flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed text-sm ${pocketType === 'CREDIT' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-orange-600 hover:bg-orange-700'}`}
+                    >
+                      {isSubmitting && pocketPrintAfterSave ? <Loader2 size={14} className="animate-spin" /> : null}
+                      Save & Print Receipt
                     </button>
                   </div>
                 </form>
