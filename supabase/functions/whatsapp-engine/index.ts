@@ -56,15 +56,23 @@ serve(async (req) => {
       
       const studentId = record.student_id
 
-      // Fetch wallet balance and school thresholds
-      const [balanceRes, configRes] = await Promise.all([
-        supabaseAdmin.from('pocket_money_balances').select('current_balance').eq('student_id', studentId).single(),
-        supabaseAdmin.from('pocket_money_config').select('low_balance_threshold, max_notifications_per_drop').single()
-      ])
+      // Fetch wallet balance and school thresholds (including our new toggle)
+const [balanceRes, configRes] = await Promise.all([
+  supabaseAdmin.from('pocket_money_balances').select('current_balance').eq('student_id', studentId).single(),
+  supabaseAdmin.from('pocket_money_config').select('low_balance_threshold, max_notifications_per_drop, is_automated_alerts_enabled').single()
+])
 
-      if (!balanceRes.data || !configRes.data) {
-        return new Response(JSON.stringify({ status: 'Skipped: Missing balance or configuration profiles' }))
-      }
+if (!balanceRes.data || !configRes.data) {
+  return new Response(JSON.stringify({ status: 'Skipped: Missing balance or configuration profiles' }))
+}
+
+// 🚨 NEW SECURITY/FEATURE GUARD: Check if Admin disabled this feature globally
+if (configRes.data.is_automated_alerts_enabled === false) {
+  return new Response(JSON.stringify({ status: 'Suppressed: Automated pocket money alerts are disabled by Admin' }), {
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    status: 200
+  })
+}
 
       const currentBalance = parseFloat(balanceRes.data.current_balance)
       const threshold = parseFloat(configRes.data.low_balance_threshold)

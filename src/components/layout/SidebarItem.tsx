@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { cookies } from 'next/headers'
 import { YearSelector } from './YearSelector'
 import { logout } from '@/actions/auth.actions'
-import { LayoutDashboard, Users, GraduationCap, CircleDollarSign, Settings, Layers, BookOpen, Clock } from 'lucide-react'
+import { LayoutDashboard, Users, GraduationCap, CircleDollarSign, Settings, Layers, BookOpen, Clock, MessageSquare } from 'lucide-react'
 
 export async function Sidebar() {
   const supabase = await createClient()
@@ -42,6 +42,7 @@ export async function Sidebar() {
     { name: 'Pending Clearance', href: '/finance/pending-clearance', roles: ['Admin', 'Accountant'], icon: Clock },
     { name: 'Staff Payroll', href: '/staff/payroll', roles: ['Admin', 'Accountant'], icon: CircleDollarSign },
     { name: 'Expenses & Ledger', href: '/expenses-ledger', roles: ['Admin', 'Accountant'], icon: BookOpen },
+    { name: 'Messages', href: '/messages', roles: ['Admin', 'Accountant'], icon: MessageSquare },
     { name: 'System Settings', href: '/settings', roles: ['Admin'], icon: Settings },
   ]
 
